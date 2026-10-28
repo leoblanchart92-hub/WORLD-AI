@@ -141,8 +141,9 @@ Comportement :
 
 - **Vérification au démarrage**, silencieuse : pas de réseau, pas de release ou
   déjà à jour ⇒ aucun message. Une version plus récente ⇒ dialogue.
-- **Vérification manuelle** via le bouton « Mise à jour » du bas du menu
-  latéral : les erreurs réseau sont alors affichées.
+- **Vérification manuelle** via l'action « Mise à jour » du bas du menu
+  latéral (les entrées « Mises à jour » et « À propos » ne figurent pas dans la
+  navigation principale) : les erreurs réseau sont alors affichées.
 - **Téléchargement** dans le cache de l'application, avec pourcentage ; un
   fichier déjà complet est réutilisé, une taille incohérente le fait supprimer.
 - **Installation** : Android demande une fois l'autorisation d'installer des

@@ -101,9 +101,17 @@ void main() {
       find.descendant(of: drawer, matching: find.text('Discussion')),
       findsOneWidget,
     );
+    expect(
+      find.descendant(of: drawer, matching: find.text('Mises à jour')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('À propos')),
+      findsNothing,
+    );
 
     await tester.tap(
-      find.descendant(of: drawer, matching: find.text('Mises à jour')),
+      find.descendant(of: drawer, matching: find.text('Mise à jour')),
     );
     await tester.pumpAndSettle();
 

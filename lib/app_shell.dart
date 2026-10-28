@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'pages/about_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/updates_page.dart';
@@ -29,7 +28,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  static const List<String> _titles = ['Discussion', 'Mises à jour', 'À propos'];
+  static const List<String> _titles = ['Discussion', 'Mises à jour'];
 
   /// Au-delà de ce délai, la préférence est considérée comme activée : un
   /// stockage lent ne doit pas désactiver silencieusement les mises à jour.
@@ -145,7 +144,6 @@ class _AppShellState extends State<AppShell> {
         children: [
           const ChatPage(),
           UpdatesPage(controller: controller),
-          AboutPage(controller: controller),
         ],
       ),
     );
@@ -195,8 +193,6 @@ class _AppDrawer extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
-        final updateReady = controller.phase == UpdatePhase.available;
-
         return Drawer(
           backgroundColor: const Color(0xFF0F0C1B),
           shape: const RoundedRectangleBorder(
@@ -266,21 +262,6 @@ class _AppDrawer extends StatelessWidget {
                   selected: index == 0,
                   onTap: () => onSelected(0),
                 ),
-                _NavTile(
-                  icon: Icons.system_update_outlined,
-                  selectedIcon: Icons.system_update_rounded,
-                  label: 'Mises à jour',
-                  selected: index == 1,
-                  showDot: updateReady,
-                  onTap: () => onSelected(1),
-                ),
-                _NavTile(
-                  icon: Icons.info_outline_rounded,
-                  selectedIcon: Icons.info_rounded,
-                  label: 'À propos',
-                  selected: index == 2,
-                  onTap: () => onSelected(2),
-                ),
                 const Spacer(),
                 const Divider(indent: 24, endIndent: 24),
                 const SizedBox(height: 10),
@@ -288,7 +269,7 @@ class _AppDrawer extends StatelessWidget {
                   icon: Icons.download_rounded,
                   label: 'Mise à jour',
                   subtitle: _updateSubtitle,
-                  highlighted: updateReady,
+                  highlighted: controller.phase == UpdatePhase.available,
                   onTap: onUpdate,
                 ),
                 _FooterTile(
@@ -325,7 +306,6 @@ class _NavTile extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
-    this.showDot = false,
   });
 
   final IconData icon;
@@ -333,7 +313,6 @@ class _NavTile extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  final bool showDot;
 
   @override
   Widget build(BuildContext context) {
@@ -349,11 +328,7 @@ class _NavTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             child: Row(
               children: [
-                _DotIcon(
-                  icon: selected ? selectedIcon : icon,
-                  active: showDot,
-                  background: const Color(0xFF0F0C1B),
-                ),
+                Icon(selected ? selectedIcon : icon, color: AppTheme.textSoft),
                 const SizedBox(width: 14),
                 Text(
                   label,
@@ -452,38 +427,3 @@ class _FooterTile extends StatelessWidget {
   }
 }
 
-class _DotIcon extends StatelessWidget {
-  const _DotIcon({
-    required this.icon,
-    required this.active,
-    required this.background,
-  });
-
-  final IconData icon;
-  final bool active;
-  final Color background;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Icon(icon, color: AppTheme.textSoft),
-        if (active)
-          Positioned(
-            right: -2,
-            top: -1,
-            child: Container(
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(
-                color: AppTheme.accent,
-                shape: BoxShape.circle,
-                border: Border.all(color: background, width: 1.5),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
