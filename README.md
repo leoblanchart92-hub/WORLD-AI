@@ -4,6 +4,72 @@ Application Android **Flutter** livrée en APK, avec **mises à jour automatique
 depuis GitHub** : au lancement, l'application compare sa version à la dernière
 release publiée et propose d'installer l'APK téléchargé.
 
+## Activer les mises à jour (une seule fois)
+
+Tant que cette partie n'est pas faite, la CI signe les APK avec la clé debug :
+ils s'installent, mais aucune mise à jour ne pourra s'installer par-dessus.
+
+### 1. Les 4 secrets de signature
+
+Dans le dépôt : **Settings** → **Secrets and variables** → **Actions**. Pour
+chaque nom ci-dessous, cliquer **Update** (ou **New repository secret** s'il
+n'existe pas encore) :
+
+| Secret | Valeur exacte |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | tout le contenu du fichier `ANDROID_KEYSTORE_BASE64.txt` |
+| `ANDROID_KEYSTORE_PASSWORD` | tout le contenu du fichier `MOT-DE-PASSE-TEMP.txt` |
+| `ANDROID_KEY_ALIAS` | `worldai` |
+| `ANDROID_KEY_PASSWORD` | le même mot de passe que ci-dessus |
+
+**Où sont ces fichiers :** dans le dossier `signing/` du **workspace local**, pas
+sur GitHub — ce dossier est exclu par `.gitignore`, donc invisible dans le
+dépôt. Il contient :
+
+| Fichier | Contenu | Rôle |
+| --- | --- | --- |
+| `signing/worldai-release.jks` | 2 634 octets | la clé de signature (à conserver) |
+| `signing/ANDROID_KEYSTORE_BASE64.txt` | 3 512 caractères, une seule ligne | à coller dans `ANDROID_KEYSTORE_BASE64` |
+| `signing/MOT-DE-PASSE-TEMP.txt` | 24 caractères | à coller dans les deux secrets `…PASSWORD` |
+
+Caractéristiques de la clé : alias `worldai`, RSA 2048, valide jusqu'au
+15 mars 2054, empreinte SHA-256
+`D7:3D:E1:C4:F2:55:F5:1B:10:72:B4:A0:7A:C7:96:D4:52:49:90:EA:0A:8B:7F:97:D1:45:FC:C2:B9:D0:8A:3B`.
+
+> Le champ `ANDROID_KEYSTORE_BASE64` doit recevoir une valeur d'environ
+> 3 500 caractères. Une valeur courte (une dizaine de caractères) est le signe
+> que c'est un nom de fichier qui a été collé, pas le fichier.
+
+### 2. Relancer la compilation
+
+Onglet **Actions** → *Build APK* → **Re-run all jobs**. Le log doit afficher,
+à l'étape *Préparer la signature de release* :
+
+```
+Keystore décodé : 2634 octets.
+Keystore et alias vérifiés.
+Signature de release configurée.
+```
+
+### 3. Installer l'APK
+
+Onglet **Releases** → `v1.2.0` → télécharger `world_ai-1.2.0.apk`.
+**Désinstaller l'application déjà installée avant de l'installer** : l'ancienne
+version est signée par la clé debug, Android refuse une mise à jour entre deux
+clés différentes. Cette réinstallation manuelle n'a lieu qu'une seule fois.
+
+### 4. Vérifier ensuite la mise à jour automatique
+
+Incrémenter `version:` dans [`pubspec.yaml`](pubspec.yaml), pousser : l'app
+installée détecte la nouvelle release au lancement et propose de l'installer.
+
+### 5. Sauvegarder la clé
+
+Copier le contenu de `ANDROID_KEYSTORE_BASE64.txt` et le mot de passe dans un
+gestionnaire de mots de passe, puis supprimer les deux `.txt` du workspace.
+Sans `worldai-release.jks` (ou son équivalent base64), aucune mise à jour ne
+pourra plus être publiée pour les installations existantes.
+
 ## Récupérer l'APK
 
 À chaque push sur `main`, le workflow
