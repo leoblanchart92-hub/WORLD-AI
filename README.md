@@ -122,6 +122,7 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `1.3.0` | Publication de test : valide la mise à jour automatique depuis une 1.2.0 installée. |
 | `1.2.0` | Première version signée avec la clé de release : les mises à jour suivantes s'installent par-dessus sans réinstallation. |
 | `1.1.0` | Système de mise à jour (vérification au lancement, téléchargement avec progression, installeur Android) et CI de compilation. |
 | `1.0.0` | Version initiale. |
