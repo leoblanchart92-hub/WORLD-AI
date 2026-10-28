@@ -22,6 +22,17 @@ Deux façons de l'installer sur un téléphone :
 Il faut autoriser « Installer des applications inconnues » pour le navigateur ou
 le gestionnaire de fichiers utilisé, puis ouvrir le fichier téléchargé.
 
+## Dépôt public obligatoire
+
+L'application interroge `https://api.github.com/repos/leoblanchart92-hub/WORLD-AI/releases/...`
+**sans authentification**. GitHub répond `404` à une requête anonyme sur un
+dépôt **privé** : l'application conclurait « aucune version n'est publiée » et
+ne proposerait jamais de mise à jour.
+
+Le dépôt doit donc rester **public** (*Settings → General → Danger zone → Change
+visibility*). Le mettre en privé casserait la mise à jour des installations
+existantes ; il faudrait alors distribuer les APK à la main.
+
 ## Publier une version (et donc une mise à jour)
 
 1. Incrémenter la version dans [`pubspec.yaml`](pubspec.yaml) :
@@ -33,6 +44,14 @@ le gestionnaire de fichiers utilisé, puis ouvrir le fichier téléchargé.
 
 Sans incrément de version, le workflow remplace l'APK de la release existante
 mais aucune mise à jour n'est proposée : c'est volontaire.
+
+## Versions publiées
+
+| Version | Contenu |
+| --- | --- |
+| `1.2.0` | Première version signée avec la clé de release : les mises à jour suivantes s'installent par-dessus sans réinstallation. |
+| `1.1.0` | Système de mise à jour (vérification au lancement, téléchargement avec progression, installeur Android) et CI de compilation. |
+| `1.0.0` | Version initiale. |
 
 ## Fonctionnement du système de mise à jour
 
