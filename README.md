@@ -113,6 +113,28 @@ Le workflow s'en sert automatiquement ; sans ces secrets il continue de produire
 un APK signé en debug, installable mais non compatible avec les mises à jour
 successives.
 
+### Si la CI échoue sur la signature
+
+L'étape *Préparer la signature de release* lance
+[`scripts/prepare-signing.sh`](scripts/prepare-signing.sh), qui :
+
+- tolère un base64 collé sur plusieurs lignes, entouré de guillemets, ou en
+  variante « url-safe » (`-` et `_` au lieu de `+` et `/`) ;
+- signale explicitement si la valeur n'est pas du base64, si le mot de passe du
+  keystore est faux ou si l'alias est incorrect ;
+- **échoue** plutôt que de produire un APK signé en debug, qui casserait les
+  mises à jour sans prévenir.
+
+Le secret `ANDROID_KEYSTORE_BASE64` doit contenir **une seule ligne** : la sortie
+de `base64 -w0 release.jks`. Ni `data:application/…;base64,`, ni chemin de
+fichier, ni contenu binaire. Pour tester la configuration hors CI :
+
+```bash
+ANDROID_KEYSTORE_BASE64="$(base64 -w0 release.jks)" \
+ANDROID_KEYSTORE_PASSWORD=… ANDROID_KEY_ALIAS=worldai ANDROID_KEY_PASSWORD=… \
+bash scripts/prepare-signing.sh
+```
+
 Conserver `release.jks` en lieu sûr : perdre cette clé impose une réinstallation
 manuelle de l'application sur les appareils concernés.
 
