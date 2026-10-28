@@ -11,6 +11,10 @@
 # Le décodage tolère les façons habituelles de coller un base64 dans un secret
 # GitHub : retours à la ligne (base64 -w76), guillemets autour de la valeur,
 # et variante « url-safe » (- et _ au lieu de + et /).
+#
+# Il vérifie ensuite que le contenu décodé est bien un keystore avant de lancer
+# Gradle : une valeur inutilisable doit produire un message précis, pas une
+# release non signée ou un échec obscur plus loin.
 set -eu
 
 fail() {
@@ -40,13 +44,33 @@ KS="$RUNNER_TEMP/release.jks"
 if ! printf '%s' "$CLEAN" | base64 -d > "$KS" 2>/dev/null || [ ! -s "$KS" ]; then
   fail "Décodage base64 du keystore impossible. Régénère la valeur avec : base64 -w0 release.jks."
 fi
-echo "Keystore décodé : $(wc -c < "$KS") octets."
 
-# Contrôle avant Gradle : mauvais mot de passe ou mauvais alias donnent ici un
-# message explicite au lieu d'un échec de signature plus loin.
-if ! keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" \
-    -alias "$KEY_ALIAS" >/dev/null 2>&1; then
-  fail "Keystore illisible : vérifie ANDROID_KEYSTORE_PASSWORD et ANDROID_KEY_ALIAS (l'alias exact du certificat)."
+SIZE=$(wc -c < "$KS" | tr -d ' ')
+echo "Keystore décodé : $SIZE octets."
+
+# Un .jks/.keystore réel pèse quelques kilo-octets et commence par la signature
+# JKS (feedfeed) ou ASN.1/PKCS12 (3082). Une valeur de quelques octets est
+# presque toujours l'encodage d'un nom de fichier au lieu du fichier lui-même.
+MAGIC=$(od -An -tx1 -N4 "$KS" | tr -d ' \n')
+case "$MAGIC" in
+  feedfeed|3082*)
+    ;;
+  *)
+    fail "ANDROID_KEYSTORE_BASE64 ne contient pas un keystore ($SIZE octets décodés, en-tête « $MAGIC »). Il faut la sortie de « base64 -w0 release.jks » — le fichier binaire encodé, pas son nom ni un mot de passe. Un keystore pèse ~2 000 à 3 000 octets, soit ~3 000 à 4 000 caractères en base64."
+    ;;
+esac
+
+# Mot de passe faux et alias absent sont deux erreurs distinctes : on les sépare
+# pour indiquer lequel des secrets corriger.
+if ! ERR=$(keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" 2>&1 >/dev/null); then
+  fail "Mot de passe du keystore refusé : ANDROID_KEYSTORE_PASSWORD ne correspond pas à ce fichier (keytool : $ERR)."
+fi
+
+if ! ERR=$(keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" \
+      -alias "$KEY_ALIAS" 2>&1 >/dev/null); then
+  ALIASES=$(keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
+    | grep -E 'PrivateKeyEntry' | cut -d, -f1 | tr -d ' ' | paste -sd ', ' - || true)
+  fail "Alias « $KEY_ALIAS » absent du keystore : ANDROID_KEY_ALIAS doit reprendre l'alias exact du certificat. Alias présents : ${ALIASES:-aucun}."
 fi
 echo "Keystore et alias vérifiés."
 
