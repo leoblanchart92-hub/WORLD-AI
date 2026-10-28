@@ -4,7 +4,7 @@
     <!-- Lancement de l'installeur d'APK pour appliquer une mise à jour. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
-        android:label="world_ai"
+        android:label="WORLD-AI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
