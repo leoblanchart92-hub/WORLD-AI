@@ -9,66 +9,73 @@ release publiée et propose d'installer l'APK téléchargé.
 Tant que cette partie n'est pas faite, la CI signe les APK avec la clé debug :
 ils s'installent, mais aucune mise à jour ne pourra s'installer par-dessus.
 
-### 1. Les 4 secrets de signature
+### 1. Un seul secret : une phrase secrète de ton choix
 
-Dans le dépôt : **Settings** → **Secrets and variables** → **Actions**. Pour
-chaque nom ci-dessous, cliquer **Update** (ou **New repository secret** s'il
-n'existe pas encore) :
+Dans le dépôt : **Settings** → **Secrets and variables** → **Actions** →
+**New repository secret** :
 
-| Secret | Valeur exacte |
+| Nom | Valeur |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | tout le contenu du fichier `ANDROID_KEYSTORE_BASE64.txt` |
-| `ANDROID_KEYSTORE_PASSWORD` | tout le contenu du fichier `MOT-DE-PASSE-TEMP.txt` |
-| `ANDROID_KEY_ALIAS` | `worldai` |
-| `ANDROID_KEY_PASSWORD` | le même mot de passe que ci-dessus |
+| `ANDROID_SIGNING_PASSPHRASE` | une phrase de ton choix, **au moins 12 caractères**, idéalement 4 mots sans rapport (exemple de forme : `cheval-bleu-42-tempete`) |
 
-**Où sont ces fichiers :** dans le dossier `signing/` du **workspace local**, pas
-sur GitHub — ce dossier est exclu par `.gitignore`, donc invisible dans le
-dépôt. Il contient :
+Rien à télécharger, aucun fichier à encoder : la clé de signature est
+**dérivée** de cette phrase par
+[`scripts/prepare-signing.sh`](scripts/prepare-signing.sh) (courbe EC P-256,
+dérivation déterministe). La même phrase redonne toujours exactement la même
+clé et le même certificat, donc la même identité de signature pour Android.
 
-| Fichier | Contenu | Rôle |
-| --- | --- | --- |
-| `signing/worldai-release.jks` | 2 634 octets | la clé de signature (à conserver) |
-| `signing/ANDROID_KEYSTORE_BASE64.txt` | 3 512 caractères, une seule ligne | à coller dans `ANDROID_KEYSTORE_BASE64` |
-| `signing/MOT-DE-PASSE-TEMP.txt` | 24 caractères | à coller dans les deux secrets `…PASSWORD` |
+> **Ne change jamais cette phrase.** Une phrase différente produit une clé
+> différente : Android refuserait alors la mise à jour
+> (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) et il faudrait désinstaller puis
+> réinstaller l'application. Note-la dans ton gestionnaire de mots de passe :
+> la solidité de la clé dépend de sa longueur et de son imprévisibilité.
 
-Caractéristiques de la clé : alias `worldai`, RSA 2048, valide jusqu'au
-15 mars 2054, empreinte SHA-256
-`D7:3D:E1:C4:F2:55:F5:1B:10:72:B4:A0:7A:C7:96:D4:52:49:90:EA:0A:8B:7F:97:D1:45:FC:C2:B9:D0:8A:3B`.
+Le **certificat public**, lui, est versionné dans
+[`certs/release-signing-cert.pem`](certs/release-signing-cert.pem) : la
+première compilation le crée et l'enregistre automatiquement dans le dépôt,
+les suivantes le réutilisent. C'est indispensable — Android compare le
+certificat entier, pas seulement la clé : sans ce fichier, chaque build serait
+considéré comme signé par une entité différente.
 
-> Le champ `ANDROID_KEYSTORE_BASE64` doit recevoir une valeur d'environ
-> 3 500 caractères. Une valeur courte (une dizaine de caractères) est le signe
-> que c'est un nom de fichier qui a été collé, pas le fichier.
+Si la phrase secrète est définie, elle est utilisée **en priorité** : les
+anciens secrets `ANDROID_KEYSTORE_*` peuvent être supprimés. Un keystore
+personnel reste pris en charge avec `ANDROID_KEYSTORE_BASE64`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et `ANDROID_KEY_PASSWORD`
+(voir « Signature de release » plus bas).
 
 ### 2. Relancer la compilation
 
-Onglet **Actions** → *Build APK* → **Re-run all jobs**. Le log doit afficher,
-à l'étape *Préparer la signature de release* :
+Onglet **Actions** → *Build APK* → **Re-run all jobs**. L'étape *Préparer la
+signature de release* doit afficher :
 
 ```
-Keystore décodé : 2634 octets.
-Keystore et alias vérifiés.
+Clé dérivée de la phrase secrète (EC P-256, alias worldai).
+Nouveau certificat créé : certs/release-signing-cert.pem (à versionner).
+Certificat : AA:BB:…  (empreinte SHA-256)
 Signature de release configurée.
 ```
+
+Au premier passage, l'étape suivante (*Enregistrer le certificat de signature*)
+commite ce fichier. Les builds suivants affichent `Certificat versionné
+réutilisé` : c'est normal et c'est ce qui garantit des mises à jour
+acceptées.
 
 ### 3. Installer l'APK
 
 Onglet **Releases** → `v1.2.0` → télécharger `world_ai-1.2.0.apk`.
 **Désinstaller l'application déjà installée avant de l'installer** : l'ancienne
-version est signée par la clé debug, Android refuse une mise à jour entre deux
-clés différentes. Cette réinstallation manuelle n'a lieu qu'une seule fois.
+version est signée par la clé debug, et Android refuse une mise à jour entre
+deux clés différentes. Cette réinstallation manuelle n'a lieu qu'une seule fois.
 
 ### 4. Vérifier ensuite la mise à jour automatique
 
-Incrémenter `version:` dans [`pubspec.yaml`](pubspec.yaml), pousser : l'app
+Incrémenter `version:` dans [`pubspec.yaml`](pubspec.yaml) et pousser : l'app
 installée détecte la nouvelle release au lancement et propose de l'installer.
 
-### 5. Sauvegarder la clé
+### 5. Conserver la phrase secrète
 
-Copier le contenu de `ANDROID_KEYSTORE_BASE64.txt` et le mot de passe dans un
-gestionnaire de mots de passe, puis supprimer les deux `.txt` du workspace.
-Sans `worldai-release.jks` (ou son équivalent base64), aucune mise à jour ne
-pourra plus être publiée pour les installations existantes.
+C'est la seule chose à sauvegarder : sans elle, la clé est irrécupérable et
+aucune mise à jour ne pourra plus être publiée pour les installations existantes.
 
 ## Récupérer l'APK
 

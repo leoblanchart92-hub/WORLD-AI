@@ -15,7 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Vide tant que la clé de signature n'est pas configurée dans les secrets.
+  # Mode recommandé : phrase secrète choisie par le propriétaire du dépôt, dont
+  # la clé de signature est dérivée (aucun fichier à transférer).
+  SIGNING_PASSPHRASE: ${{ secrets.ANDROID_SIGNING_PASSPHRASE }}
+  # Mode alternatif : keystore existant fourni en base64 (priorité plus basse).
   KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
 jobs:
@@ -62,6 +65,32 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: bash scripts/prepare-signing.sh
+
+      - name: Enregistrer le certificat de signature
+        run: |
+          set -eu
+          CERT=certs/release-signing-cert.pem
+          if [ ! -f "$CERT" ]; then
+            echo "::error::Certificat de signature absent : impossible de garantir une identité stable." >&2
+            exit 1
+          fi
+          if [ -z "$(git status --porcelain -- "$CERT")" ]; then
+            echo "Certificat déjà versionné : $(openssl x509 -in "$CERT" -noout -fingerprint -sha256)."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$CERT"
+          git commit -m "Enregistre le certificat de signature de release"
+          for essai in 1 2 3; do
+            if git push; then
+              echo "Certificat poussé sur la branche : les prochains builds réutiliseront la même identité."
+              exit 0
+            fi
+            git pull --rebase --autostash || true
+          done
+          echo "::error::Impossible de versionner le certificat : un APK publié sans certificat enregistré casserait les mises à jour suivantes." >&2
+          exit 1
 
       - name: Construire l'APK
         run: |
