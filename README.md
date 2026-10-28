@@ -134,15 +134,15 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 | `lib/update/update_config.dart` | Dépôt GitHub interrogé (`owner` / `repository`). |
 | `lib/update/app_version.dart` | Lecture et comparaison de versions (`1.10.0 > 1.9.9`). |
 | `lib/update/update_service.dart` | Appel `GET /repos/{owner}/{repo}/releases/latest`, sélection de l'asset `.apk`, téléchargement avec progression. |
-| `lib/update/update_ui.dart` | Dialogue « Plus tard / Télécharger et installer », messages d'erreur. |
+| `lib/update/update_ui.dart` | Feuille de mise à jour : détails, progression, reprise et installation. |
 | `lib/update/apk_installer.dart` | Lance l'installeur Android sur l'APK téléchargé. |
 
 Comportement :
 
 - **Vérification au démarrage**, silencieuse : pas de réseau, pas de release ou
   déjà à jour ⇒ aucun message. Une version plus récente ⇒ dialogue.
-- **Vérification manuelle** via le bouton ↻ de la barre d'application : les
-  erreurs réseau sont alors affichées.
+- **Vérification manuelle** via le bouton « Mise à jour » du bas du menu
+  latéral : les erreurs réseau sont alors affichées.
 - **Téléchargement** dans le cache de l'application, avec pourcentage ; un
   fichier déjà complet est réutilisé, une taille incohérente le fait supprimer.
 - **Installation** : Android demande une fois l'autorisation d'installer des

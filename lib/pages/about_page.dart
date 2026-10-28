@@ -96,7 +96,7 @@ class AboutPage extends StatelessWidget {
           const SizedBox(height: 22),
           const Text(
             'Les mises à jour sont vérifiées au lancement, puis à la demande '
-            'depuis le bouton ↻ de la barre supérieure ou la page Mises à jour.',
+            'depuis le bouton Mise à jour du bas du menu latéral.',
             style: TextStyle(fontSize: 12, height: 1.5, color: AppTheme.muted),
           ),
         ],

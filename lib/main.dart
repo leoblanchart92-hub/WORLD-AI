@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_shell.dart';
+import 'settings_store.dart';
 import 'theme/app_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_service.dart';
@@ -14,6 +15,7 @@ class WorldAiApp extends StatefulWidget {
     super.key,
     this.updateService,
     this.checkUpdatesOnStart = true,
+    this.settingsStore,
   });
 
   /// Injecté par les tests pour rester hors ligne.
@@ -21,6 +23,9 @@ class WorldAiApp extends StatefulWidget {
 
   /// Vérification silencieuse de mise à jour au lancement.
   final bool checkUpdatesOnStart;
+
+  /// Injecté par les tests ; sinon les préférences viennent du disque.
+  final SettingsStore? settingsStore;
 
   @override
   State<WorldAiApp> createState() => _WorldAiAppState();
@@ -47,6 +52,7 @@ class _WorldAiAppState extends State<WorldAiApp> {
       home: AppShell(
         controller: _controller,
         checkUpdatesOnStart: widget.checkUpdatesOnStart,
+        settingsStore: widget.settingsStore,
       ),
     );
   }
