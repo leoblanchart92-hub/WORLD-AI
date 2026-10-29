@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 class SettingsStore {
   static const String _fileName = 'settings.json';
   static const String _checkOnLaunchKey = 'checkOnLaunch';
+  static const String _appIconKey = 'appIcon';
 
   Future<File?> _file() async {
     try {
@@ -40,7 +41,30 @@ class SettingsStore {
     return fallback;
   }
 
+  Future<String> loadAppIcon({String fallback = 'default'}) async {
+    final file = await _file();
+    if (file == null) return fallback;
+    try {
+      if (!await file.exists()) return fallback;
+      final data = jsonDecode(await file.readAsString());
+      if (data is Map && data[_appIconKey] is String) {
+        return data[_appIconKey] as String;
+      }
+    } catch (error) {
+      debugPrint('Préférences illisibles : $error');
+    }
+    return fallback;
+  }
+
   Future<void> saveCheckOnLaunch(bool value) async {
+    await _updateValue(_checkOnLaunchKey, value);
+  }
+
+  Future<void> saveAppIcon(String value) async {
+    await _updateValue(_appIconKey, value);
+  }
+
+  Future<void> _updateValue(String key, Object value) async {
     final file = await _file();
     if (file == null) return;
     try {
@@ -51,7 +75,7 @@ class SettingsStore {
       } else {
         data = <String, dynamic>{};
       }
-      data[_checkOnLaunchKey] = value;
+      data[key] = value;
       await file.writeAsString(jsonEncode(data));
     } catch (error) {
       debugPrint('Préférences non enregistrées : $error');

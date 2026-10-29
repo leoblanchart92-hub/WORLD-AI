@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_shell.dart';
 import 'settings_store.dart';
@@ -32,8 +33,35 @@ class WorldAiApp extends StatefulWidget {
 }
 
 class _WorldAiAppState extends State<WorldAiApp> {
-  late final UpdateController _controller =
-      UpdateController(service: widget.updateService);
+  static const MethodChannel _iconChannel = MethodChannel(
+    'com.worldai.world_ai/app_icon',
+  );
+
+  late final UpdateController _controller = UpdateController(
+    service: widget.updateService,
+  );
+  late final SettingsStore _settings = widget.settingsStore ?? SettingsStore();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppIcon();
+  }
+
+  Future<void> _loadAppIcon() async {
+    final icon = await _settings.loadAppIcon();
+    await _applyAppIcon(icon);
+  }
+
+  Future<void> _applyAppIcon(String icon) async {
+    try {
+      await _iconChannel.invokeMethod<void>('setIcon', icon);
+    } on MissingPluginException {
+      // iOS et les tests gardent l’icône système par défaut.
+    } on PlatformException catch (error) {
+      debugPrint('Icône de l’application non modifiée : ${error.message}');
+    }
+  }
 
   @override
   void dispose() {
@@ -52,7 +80,12 @@ class _WorldAiAppState extends State<WorldAiApp> {
       home: AppShell(
         controller: _controller,
         checkUpdatesOnStart: widget.checkUpdatesOnStart,
-        settingsStore: widget.settingsStore,
+        settingsStore: _settings,
+        loadAppIcon: _settings.loadAppIcon,
+        onAppIconChanged: (icon) async {
+          await _settings.saveAppIcon(icon);
+          await _applyAppIcon(icon);
+        },
       ),
     );
   }

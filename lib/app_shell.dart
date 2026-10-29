@@ -16,6 +16,8 @@ class AppShell extends StatefulWidget {
     required this.controller,
     this.checkUpdatesOnStart = true,
     this.settingsStore,
+    this.loadAppIcon,
+    this.onAppIconChanged,
   });
 
   final UpdateController controller;
@@ -23,6 +25,8 @@ class AppShell extends StatefulWidget {
 
   /// Injecté par les tests ; sinon les préférences viennent du disque.
   final SettingsStore? settingsStore;
+  final Future<String> Function()? loadAppIcon;
+  final Future<void> Function(String)? onAppIconChanged;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -98,6 +102,10 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  Future<void> _saveAppIcon(String icon) async {
+    await _settings.saveAppIcon(icon);
+  }
+
   Future<void> _openSettings() async {
     final navigator = Navigator.of(context);
     await navigator.maybePop();
@@ -110,6 +118,8 @@ class _AppShellState extends State<AppShell> {
           checkOnLaunch: _checkOnLaunch,
           onCheckOnLaunchChanged: (value) =>
               setState(() => _checkOnLaunch = value),
+          loadAppIcon: widget.loadAppIcon ?? _settings.loadAppIcon,
+          onAppIconChanged: widget.onAppIconChanged ?? _saveAppIcon,
         ),
       ),
     );
@@ -456,4 +466,3 @@ class _FooterTile extends StatelessWidget {
     );
   }
 }
-

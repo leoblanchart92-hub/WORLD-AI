@@ -29,12 +29,19 @@ class _FakeService extends GithubUpdateService {
 /// Préférences en mémoire : les tests n'ont pas de stockage sur disque.
 class _MemorySettings extends SettingsStore {
   bool checkOnLaunch = true;
+  String appIcon = 'default';
 
   @override
   Future<bool> loadCheckOnLaunch({bool fallback = true}) async => checkOnLaunch;
 
   @override
   Future<void> saveCheckOnLaunch(bool value) async => checkOnLaunch = value;
+
+  @override
+  Future<String> loadAppIcon({String fallback = 'default'}) async => appIcon;
+
+  @override
+  Future<void> saveAppIcon(String value) async => appIcon = value;
 }
 
 AppUpdate _pendingUpdate() => AppUpdate(
@@ -99,6 +106,33 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Version 1.6.2'), findsOneWidget);
+  });
+
+  testWidgets('change et mémorise l’icône depuis les paramètres', (
+    tester,
+  ) async {
+    final settings = _MemorySettings();
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paramètres'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Icône 1'), findsOneWidget);
+    expect(find.text('Icône 2'), findsOneWidget);
+    expect(find.text('Icône 3'), findsOneWidget);
+    await tester.tap(find.text('Icône 3'));
+    await tester.pumpAndSettle();
+
+    expect(settings.appIcon, 'image3');
   });
 
   testWidgets('envoie un message depuis la barre', (tester) async {

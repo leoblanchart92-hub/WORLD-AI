@@ -14,24 +14,53 @@ class SettingsPage extends StatefulWidget {
     required this.store,
     required this.checkOnLaunch,
     required this.onCheckOnLaunchChanged,
+    required this.loadAppIcon,
+    required this.onAppIconChanged,
   });
 
   final UpdateController controller;
   final SettingsStore store;
   final bool checkOnLaunch;
   final ValueChanged<bool> onCheckOnLaunchChanged;
+  final Future<String> Function() loadAppIcon;
+  final Future<void> Function(String) onAppIconChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  static const Map<String, String> _iconAssets = {
+    'default': 'assets/icons/app_icon_default.png',
+    'image2': 'assets/icons/app_icon_image2.png',
+    'image3': 'assets/icons/app_icon_image3.png',
+  };
+
   late bool _checkOnLaunch = widget.checkOnLaunch;
+  late Future<String> _appIcon = widget.loadAppIcon();
+
+  Future<void> _setAppIcon(String value) async {
+    setState(() {
+      _appIcon = Future.value(value);
+    });
+    await widget.onAppIconChanged(value);
+  }
 
   Future<void> _setCheckOnLaunch(bool value) async {
     setState(() => _checkOnLaunch = value);
     widget.onCheckOnLaunchChanged(value);
     await widget.store.saveCheckOnLaunch(value);
+  }
+
+  String _iconLabel(String value) {
+    switch (value) {
+      case 'image2':
+        return 'Icône 2';
+      case 'image3':
+        return 'Icône 3';
+      default:
+        return 'Icône 1';
+    }
   }
 
   @override
@@ -73,11 +102,66 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: AppTheme.muted,
                 ),
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const WhatsNewPage(),
-                  ),
+                  MaterialPageRoute<void>(builder: (_) => const WhatsNewPage()),
                 ),
               ),
+            ),
+            const SizedBox(height: 22),
+            const _SectionTitle('Icône de l’application'),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Choisis l’icône affichée sur l’écran d’accueil Android.',
+                style: TextStyle(fontSize: 12, color: AppTheme.muted),
+              ),
+            ),
+            FutureBuilder<String>(
+              future: _appIcon,
+              builder: (context, snapshot) {
+                final selected = snapshot.data ?? 'default';
+                return Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppTheme.outline),
+                  ),
+                  child: Material(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    child: RadioGroup<String>(
+                      groupValue: selected,
+                      onChanged: (value) {
+                        if (value != null &&
+                            snapshot.connectionState !=
+                                ConnectionState.waiting) {
+                          _setAppIcon(value);
+                        }
+                      },
+                      child: Column(
+                        children: [
+                          for (final entry in _iconAssets.entries)
+                            RadioListTile<String>(
+                              value: entry.key,
+                              enabled:
+                                  snapshot.connectionState !=
+                                  ConnectionState.waiting,
+                              activeColor: AppTheme.accent,
+                              title: Text(_iconLabel(entry.key)),
+                              secondary: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.asset(
+                                  entry.value,
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 22),
             const _SectionTitle('Mises à jour'),
@@ -92,7 +176,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _SwitchRow(
                     icon: Icons.bolt_rounded,
                     title: 'Vérifier au lancement',
-                    subtitle: 'Recherche une nouvelle version à chaque '
+                    subtitle:
+                        'Recherche une nouvelle version à chaque '
                         'ouverture de l\'application.',
                     value: _checkOnLaunch,
                     onChanged: _setCheckOnLaunch,
