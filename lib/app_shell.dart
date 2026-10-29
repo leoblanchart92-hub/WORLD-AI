@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'pages/chat_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/updates_page.dart';
+import 'pages/whats_new_page.dart';
 import 'settings_store.dart';
 import 'theme/app_theme.dart';
 import 'update/update_controller.dart';
@@ -91,6 +92,12 @@ class _AppShellState extends State<AppShell> {
     await widget.controller.check();
   }
 
+  void _openWhatsNew() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const WhatsNewPage()),
+    );
+  }
+
   void _openSettings() {
     Navigator.of(context).maybePop();
     Navigator.of(context).push(
@@ -131,6 +138,27 @@ class _AppShellState extends State<AppShell> {
             ],
           ),
         ),
+        actions: _index == 0
+            ? [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: TextButton.icon(
+                    onPressed: _openWhatsNew,
+                    icon: const Icon(Icons.auto_awesome_rounded, size: 17),
+                    label: const Text('Nouveauté'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.accent,
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(0, 38),
+                    ),
+                  ),
+                ),
+              ]
+            : null,
       ),
       drawer: _AppDrawer(
         index: _index,

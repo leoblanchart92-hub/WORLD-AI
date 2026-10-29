@@ -4,6 +4,7 @@ import '../settings_store.dart';
 import '../theme/app_theme.dart';
 import '../update/update_config.dart';
 import '../update/update_controller.dart';
+import 'whats_new_page.dart';
 
 /// Paramètres de l'application, ouverts depuis le bas du menu latéral.
 class SettingsPage extends StatefulWidget {
@@ -42,6 +43,42 @@ class _SettingsPageState extends State<SettingsPage> {
         builder: (context, _) => ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
           children: [
+            const _SectionTitle('Application'),
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.outline),
+              ),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: AppTheme.accent,
+                ),
+                title: const Text(
+                  'Nouveauté',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.text,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Voir toutes les améliorations de l’application',
+                  style: TextStyle(fontSize: 12, color: AppTheme.muted),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppTheme.muted,
+                ),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const WhatsNewPage(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 22),
             const _SectionTitle('Mises à jour'),
             Container(
               decoration: BoxDecoration(
