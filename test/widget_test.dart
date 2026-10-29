@@ -79,7 +79,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Paramètres'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Nouveauté'));
+      await tester.tap(find.widgetWithText(ListTile, 'Nouveauté'));
       await tester.pumpAndSettle();
 
       expect(
