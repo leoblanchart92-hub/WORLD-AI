@@ -44,12 +44,13 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
           children: [
             const _SectionTitle('Application'),
-            Container(
-              decoration: BoxDecoration(
-                color: AppTheme.surface,
+            Material(
+              color: AppTheme.surface,
+              shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppTheme.outline),
+                side: const BorderSide(color: AppTheme.outline),
               ),
+              clipBehavior: Clip.antiAlias,
               child: ListTile(
                 leading: const Icon(
                   Icons.auto_awesome_rounded,
