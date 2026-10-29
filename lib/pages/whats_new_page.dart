@@ -8,6 +8,14 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.6.4',
+      title: 'Nouvelle icône WORLD-AI',
+      icon: Icons.image_outlined,
+      changes: [
+        'L’icône de l’application a été remplacée par le nouveau visuel WORLD-AI.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.6.3',
       title: 'Sélecteur d’IA en préparation',
       icon: Icons.auto_awesome_outlined,
