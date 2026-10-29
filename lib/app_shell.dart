@@ -98,9 +98,11 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  void _openSettings() {
-    Navigator.of(context).maybePop();
-    Navigator.of(context).push(
+  Future<void> _openSettings() async {
+    final navigator = Navigator.of(context);
+    await navigator.maybePop();
+    if (!mounted) return;
+    await navigator.push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsPage(
           controller: widget.controller,
