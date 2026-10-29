@@ -61,34 +61,43 @@ void main() {
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);
   });
 
-  testWidgets(
-    'ouvre les améliorations depuis la discussion et les paramètres',
-    (tester) async {
-      await tester.pumpWidget(
-        WorldAiApp(updateService: _FakeService(), checkUpdatesOnStart: false),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('ouvre les nouveautés depuis le bouton de la discussion', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      WorldAiApp(updateService: _FakeService(), checkUpdatesOnStart: false),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Nouveauté'));
-      await tester.pumpAndSettle();
-      expect(find.text('Version 1.6.0'), findsOneWidget);
+    await tester.tap(find.text('Nouveauté'));
+    await tester.pumpAndSettle();
 
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.menu));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Paramètres'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ListTile, 'Nouveauté'));
-      await tester.pumpAndSettle();
+    expect(
+      find.text('Retrouve ici les principales améliorations de l’application.'),
+      findsOneWidget,
+    );
+    expect(find.text('Version 1.6.2'), findsOneWidget);
+  });
 
-      expect(
-        find.text('Retrouve ici les principales améliorations de l’application.'),
-        findsOneWidget,
-      );
-      expect(find.text('Version 1.6.0'), findsOneWidget);
-    },
-  );
+  testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
+    await tester.pumpWidget(
+      WorldAiApp(updateService: _FakeService(), checkUpdatesOnStart: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paramètres'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Nouveauté'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Retrouve ici les principales améliorations de l’application.'),
+      findsOneWidget,
+    );
+    expect(find.text('Version 1.6.2'), findsOneWidget);
+  });
 
   testWidgets('envoie un message depuis la barre', (tester) async {
     await tester.pumpWidget(
