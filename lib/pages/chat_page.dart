@@ -193,49 +193,108 @@ class _Composer extends StatelessWidget {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  minLines: 1,
-                  maxLines: 5,
-                  cursorColor: AppTheme.accent,
-                  keyboardType: TextInputType.text,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => onSend(),
-                  style: const TextStyle(fontSize: 14, color: AppTheme.text),
-                  decoration: InputDecoration(
-                    hintText: 'Écris un message…',
-                    hintStyle: const TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.muted,
-                    ),
-                    filled: true,
-                    fillColor: AppTheme.surfaceHigh,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 14,
-                    ),
-                    border: border,
-                    enabledBorder: border,
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(26),
-                      borderSide: BorderSide(
-                        color: AppTheme.seed.withAlpha(170),
-                        width: 1.4,
+              const _AiSelectorPlaceholder(),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      minLines: 1,
+                      maxLines: 5,
+                      cursorColor: AppTheme.accent,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => onSend(),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: AppTheme.text,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Écris un message…',
+                        hintStyle: const TextStyle(
+                          fontSize: 14,
+                          color: AppTheme.muted,
+                        ),
+                        filled: true,
+                        fillColor: AppTheme.surfaceHigh,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 14,
+                        ),
+                        border: border,
+                        enabledBorder: border,
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(26),
+                          borderSide: BorderSide(
+                            color: AppTheme.seed.withAlpha(170),
+                            width: 1.4,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  _SendButton(enabled: canSend, onTap: onSend),
+                ],
               ),
-              const SizedBox(width: 10),
-              _SendButton(enabled: canSend, onTap: onSend),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AiSelectorPlaceholder extends StatelessWidget {
+  const _AiSelectorPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.outline),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.auto_awesome_outlined,
+            size: 18,
+            color: AppTheme.accent,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Choisir une IA',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textSoft,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Ajoute prochainement',
+                  style: TextStyle(fontSize: 11, color: AppTheme.muted),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.muted),
+        ],
       ),
     );
   }

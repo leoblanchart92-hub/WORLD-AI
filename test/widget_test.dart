@@ -56,6 +56,8 @@ void main() {
     expect(find.text('Discussion'), findsOneWidget);
     expect(find.text('WORLD-AI v1.3.0'), findsOneWidget);
     expect(find.text('Commence la discussion'), findsOneWidget);
+    expect(find.text('Choisir une IA'), findsOneWidget);
+    expect(find.text('Ajoute prochainement'), findsOneWidget);
     expect(find.text('Écris un message…'), findsOneWidget);
     // La mise à jour n'est plus dans la barre supérieure.
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);

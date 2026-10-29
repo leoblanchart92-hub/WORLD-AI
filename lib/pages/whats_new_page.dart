@@ -8,6 +8,15 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.6.3',
+      title: 'Sélecteur d’IA en préparation',
+      icon: Icons.auto_awesome_outlined,
+      changes: [
+        'Un aperçu du choix de l’intelligence artificielle apparaît au-dessus de la barre de discussion.',
+        'La sélection sera disponible dans une prochaine mise à jour.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.6.2',
       title: 'Les nouveautés à portée de main',
       icon: Icons.auto_awesome_rounded,
