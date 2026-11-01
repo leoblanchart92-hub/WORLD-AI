@@ -8,12 +8,12 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
-      version: '1.8.0',
-      title: 'Choisis ton fond d’écran',
-      icon: Icons.wallpaper_rounded,
+      version: '1.8.1',
+      title: 'Six icônes au choix',
+      icon: Icons.apps_rounded,
       changes: [
-        'Les paramètres proposent un sélecteur de fond d’écran, avec le fond sombre d’origine et trois visuels WORLD-AI.',
-        'Le fond choisi est mémorisé et s’affiche derrière la discussion et les mises à jour.',
+        'Un bouton dans les paramètres ouvre une fenêtre pour choisir l’icône de l’application parmi six visuels WORLD-AI.',
+        'L’icône choisie est appliquée sur l’écran d’accueil Android et mémorisée sur l’appareil.',
       ],
     ),
     _ReleaseNotes(

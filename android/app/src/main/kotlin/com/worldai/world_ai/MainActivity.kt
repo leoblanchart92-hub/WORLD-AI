@@ -54,6 +54,9 @@ class MainActivity : FlutterActivity() {
             "default" to "com.worldai.world_ai.MainActivityDefault",
             "image2" to "com.worldai.world_ai.MainActivityImage2",
             "image3" to "com.worldai.world_ai.MainActivityImage3",
+            "image4" to "com.worldai.world_ai.MainActivityImage4",
+            "image5" to "com.worldai.world_ai.MainActivityImage5",
+            "image6" to "com.worldai.world_ai.MainActivityImage6",
         )
     }
 }

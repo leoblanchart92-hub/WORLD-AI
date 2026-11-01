@@ -61,6 +61,42 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity-alias>
+        <activity-alias
+            android:name=".MainActivityImage4"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_image4"
+            android:label="WORLD-AI"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityImage5"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_image5"
+            android:label="WORLD-AI"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityImage6"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_image6"
+            android:label="WORLD-AI"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

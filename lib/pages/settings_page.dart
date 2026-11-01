@@ -4,7 +4,6 @@ import '../settings_store.dart';
 import '../theme/app_theme.dart';
 import '../update/update_config.dart';
 import '../update/update_controller.dart';
-import '../wallpapers.dart';
 import 'whats_new_page.dart';
 
 /// Paramètres de l'application, ouverts depuis le bas du menu latéral.
@@ -17,8 +16,6 @@ class SettingsPage extends StatefulWidget {
     required this.onCheckOnLaunchChanged,
     required this.loadAppIcon,
     required this.onAppIconChanged,
-    required this.wallpaper,
-    required this.onWallpaperChanged,
   });
 
   final UpdateController controller;
@@ -27,23 +24,39 @@ class SettingsPage extends StatefulWidget {
   final ValueChanged<bool> onCheckOnLaunchChanged;
   final Future<String> Function() loadAppIcon;
   final Future<void> Function(String) onAppIconChanged;
-  final String wallpaper;
-  final Future<void> Function(String) onWallpaperChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
-  static const Map<String, String> _iconAssets = {
-    'default': 'assets/icons/app_icon_default.png',
-    'image2': 'assets/icons/app_icon_image2.png',
-    'image3': 'assets/icons/app_icon_image3.png',
-  };
+/// Visuel proposé pour l’icône de l’application.
+class _IconOption {
+  const _IconOption(this.id, this.label, this.asset);
 
+  final String id;
+  final String label;
+  final String asset;
+}
+
+const List<_IconOption> _appIcons = [
+  _IconOption('default', 'Icône 1', 'assets/icons/app_icon_default.png'),
+  _IconOption('image2', 'Icône 2', 'assets/icons/app_icon_image2.png'),
+  _IconOption('image3', 'Icône 3', 'assets/icons/app_icon_image3.png'),
+  _IconOption('image4', 'Icône 4', 'assets/icons/app_icon_image4.png'),
+  _IconOption('image5', 'Icône 5', 'assets/icons/app_icon_image5.png'),
+  _IconOption('image6', 'Icône 6', 'assets/icons/app_icon_image6.png'),
+];
+
+_IconOption _iconFor(String id) {
+  for (final icon in _appIcons) {
+    if (icon.id == id) return icon;
+  }
+  return _appIcons.first;
+}
+
+class _SettingsPageState extends State<SettingsPage> {
   late bool _checkOnLaunch = widget.checkOnLaunch;
   late Future<String> _appIcon = widget.loadAppIcon();
-  late String _wallpaper = widget.wallpaper;
 
   Future<void> _setAppIcon(String value) async {
     setState(() {
@@ -52,33 +65,21 @@ class _SettingsPageState extends State<SettingsPage> {
     await widget.onAppIconChanged(value);
   }
 
-  /// Petite fenêtre de choix du fond, appliqué dès qu'une vignette est
+  /// Petite fenêtre de choix de l’icône, appliquée dès qu’une vignette est
   /// touchée.
-  Future<void> _pickWallpaper() async {
+  Future<void> _pickAppIcon(String current) async {
     final choice = await showDialog<String>(
       context: context,
-      builder: (_) => _WallpaperDialog(selected: _wallpaper),
+      builder: (_) => _IconDialog(selected: current),
     );
-    if (choice == null || choice == _wallpaper) return;
-    setState(() => _wallpaper = choice);
-    await widget.onWallpaperChanged(choice);
+    if (choice == null || choice == current) return;
+    await _setAppIcon(choice);
   }
 
   Future<void> _setCheckOnLaunch(bool value) async {
     setState(() => _checkOnLaunch = value);
     widget.onCheckOnLaunchChanged(value);
     await widget.store.saveCheckOnLaunch(value);
-  }
-
-  String _iconLabel(String value) {
-    switch (value) {
-      case 'image2':
-        return 'Icône 2';
-      case 'image3':
-        return 'Icône 3';
-      default:
-        return 'Icône 1';
-    }
   }
 
   @override
@@ -137,103 +138,68 @@ class _SettingsPageState extends State<SettingsPage> {
               future: _appIcon,
               builder: (context, snapshot) {
                 final selected = snapshot.data ?? 'default';
-                return Container(
-                  decoration: BoxDecoration(
+                final icon = _iconFor(selected);
+                return Material(
+                  color: AppTheme.surface,
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppTheme.outline),
+                    side: const BorderSide(color: AppTheme.outline),
                   ),
-                  child: Material(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(20),
-                    child: RadioGroup<String>(
-                      groupValue: selected,
-                      onChanged: (value) {
-                        if (value != null &&
-                            snapshot.connectionState !=
-                                ConnectionState.waiting) {
-                          _setAppIcon(value);
-                        }
-                      },
-                      child: Column(
-                        children: [
-                          for (final entry in _iconAssets.entries)
-                            RadioListTile<String>(
-                              value: entry.key,
-                              enabled:
-                                  snapshot.connectionState !=
-                                  ConnectionState.waiting,
-                              activeColor: AppTheme.accent,
-                              title: Text(_iconLabel(entry.key)),
-                              secondary: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.asset(
-                                  entry.value,
-                                  width: 48,
-                                  height: 48,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                            ),
-                        ],
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset(
+                        icon.asset,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        cacheWidth: 144,
                       ),
                     ),
+                    title: const Text(
+                      'Icône de l’application',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.text,
+                      ),
+                    ),
+                    subtitle: Text(
+                      icon.label,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.muted,
+                      ),
+                    ),
+                    trailing: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Choisir',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.accent,
+                          ),
+                        ),
+                        SizedBox(width: 2),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppTheme.muted,
+                        ),
+                      ],
+                    ),
+                    onTap: snapshot.connectionState == ConnectionState.waiting
+                        ? null
+                        : () => _pickAppIcon(selected),
                   ),
                 );
               },
-            ),
-            const SizedBox(height: 22),
-            const _SectionTitle('Fond d’écran'),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 10),
-              child: Text(
-                'Choisis l’image affichée derrière la discussion.',
-                style: TextStyle(fontSize: 12, color: AppTheme.muted),
-              ),
-            ),
-            Material(
-              color: AppTheme.surface,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: const BorderSide(color: AppTheme.outline),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 6,
-                ),
-                leading: WallpaperThumbnail(
-                  wallpaper: wallpaperFor(_wallpaper),
-                ),
-                title: const Text(
-                  'Fond d’écran',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.text,
-                  ),
-                ),
-                subtitle: Text(
-                  wallpaperFor(_wallpaper).label,
-                  style: const TextStyle(fontSize: 12, color: AppTheme.muted),
-                ),
-                trailing: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Choisir',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.accent,
-                      ),
-                    ),
-                    SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded, color: AppTheme.muted),
-                  ],
-                ),
-                onTap: _pickWallpaper,
-              ),
             ),
             const SizedBox(height: 22),
             const _SectionTitle('Mises à jour'),
@@ -286,10 +252,10 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// Petite fenêtre de sélection : quatre vignettes, un toucher applique le
-/// fond et referme la fenêtre.
-class _WallpaperDialog extends StatelessWidget {
-  const _WallpaperDialog({required this.selected});
+/// Petite fenêtre de sélection : six vignettes, un toucher applique l’icône
+/// et referme la fenêtre.
+class _IconDialog extends StatelessWidget {
+  const _IconDialog({required this.selected});
 
   final String selected;
 
@@ -305,7 +271,7 @@ class _WallpaperDialog extends StatelessWidget {
       ),
       titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
       title: const Text(
-        'Fond d’écran',
+        'Icône de l’application',
         style: TextStyle(
           fontSize: 17,
           fontWeight: FontWeight.w800,
@@ -318,33 +284,32 @@ class _WallpaperDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (var index = 0; index < wallpapers.length; index += 2) ...[
+            for (var index = 0; index < _appIcons.length; index += 2) ...[
               if (index > 0) const SizedBox(height: 10),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: AspectRatio(
-                      aspectRatio: 0.9,
-                      child: _WallpaperChoice(
-                        wallpaper: wallpapers[index],
-                        selected: wallpapers[index].id == selected,
+                      aspectRatio: 1,
+                      child: _IconChoice(
+                        icon: _appIcons[index],
+                        selected: _appIcons[index].id == selected,
                         onTap: () =>
-                            Navigator.of(context).pop(wallpapers[index].id),
+                            Navigator.of(context).pop(_appIcons[index].id),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: index + 1 < wallpapers.length
+                    child: index + 1 < _appIcons.length
                         ? AspectRatio(
-                            aspectRatio: 0.9,
-                            child: _WallpaperChoice(
-                              wallpaper: wallpapers[index + 1],
-                              selected: wallpapers[index + 1].id == selected,
-                              onTap: () =>
-                                  Navigator.of(context)
-                                      .pop(wallpapers[index + 1].id),
+                            aspectRatio: 1,
+                            child: _IconChoice(
+                              icon: _appIcons[index + 1],
+                              selected: _appIcons[index + 1].id == selected,
+                              onTap: () => Navigator.of(context)
+                                  .pop(_appIcons[index + 1].id),
                             ),
                           )
                         : const SizedBox.shrink(),
@@ -366,20 +331,19 @@ class _WallpaperDialog extends StatelessWidget {
   }
 }
 
-class _WallpaperChoice extends StatelessWidget {
-  const _WallpaperChoice({
-    required this.wallpaper,
+class _IconChoice extends StatelessWidget {
+  const _IconChoice({
+    required this.icon,
     required this.selected,
     required this.onTap,
   });
 
-  final WallpaperOption wallpaper;
+  final _IconOption icon;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final asset = wallpaper.asset;
     return Material(
       color: AppTheme.surfaceHigh,
       borderRadius: BorderRadius.circular(16),
@@ -401,17 +365,11 @@ class _WallpaperChoice extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (asset == null)
-                      const ColoredBox(
-                        color: AppTheme.background,
-                        child: Icon(
-                          Icons.dark_mode_rounded,
-                          size: 26,
-                          color: AppTheme.muted,
-                        ),
-                      )
-                    else
-                      Image.asset(asset, fit: BoxFit.cover, cacheWidth: 360),
+                    Image.asset(
+                      icon.asset,
+                      fit: BoxFit.cover,
+                      cacheWidth: 360,
+                    ),
                     if (selected)
                       Align(
                         alignment: Alignment.topRight,
@@ -438,7 +396,7 @@ class _WallpaperChoice extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 7, 10, 9),
                 child: Text(
-                  wallpaper.label,
+                  icon.label,
                   style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
