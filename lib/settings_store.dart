@@ -14,6 +14,7 @@ class SettingsStore {
   static const String _fileName = 'settings.json';
   static const String _checkOnLaunchKey = 'checkOnLaunch';
   static const String _appIconKey = 'appIcon';
+  static const String _wallpaperKey = 'wallpaper';
 
   Future<File?> _file() async {
     try {
@@ -56,8 +57,27 @@ class SettingsStore {
     return fallback;
   }
 
+  Future<String> loadWallpaper({String fallback = 'default'}) async {
+    final file = await _file();
+    if (file == null) return fallback;
+    try {
+      if (!await file.exists()) return fallback;
+      final data = jsonDecode(await file.readAsString());
+      if (data is Map && data[_wallpaperKey] is String) {
+        return data[_wallpaperKey] as String;
+      }
+    } catch (error) {
+      debugPrint('Préférences illisibles : $error');
+    }
+    return fallback;
+  }
+
   Future<void> saveCheckOnLaunch(bool value) async {
     await _updateValue(_checkOnLaunchKey, value);
+  }
+
+  Future<void> saveWallpaper(String value) async {
+    await _updateValue(_wallpaperKey, value);
   }
 
   Future<void> saveAppIcon(String value) async {

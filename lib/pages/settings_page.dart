@@ -4,6 +4,7 @@ import '../settings_store.dart';
 import '../theme/app_theme.dart';
 import '../update/update_config.dart';
 import '../update/update_controller.dart';
+import '../wallpapers.dart';
 import 'whats_new_page.dart';
 
 /// Paramètres de l'application, ouverts depuis le bas du menu latéral.
@@ -16,6 +17,8 @@ class SettingsPage extends StatefulWidget {
     required this.onCheckOnLaunchChanged,
     required this.loadAppIcon,
     required this.onAppIconChanged,
+    required this.wallpaper,
+    required this.onWallpaperChanged,
   });
 
   final UpdateController controller;
@@ -24,6 +27,8 @@ class SettingsPage extends StatefulWidget {
   final ValueChanged<bool> onCheckOnLaunchChanged;
   final Future<String> Function() loadAppIcon;
   final Future<void> Function(String) onAppIconChanged;
+  final String wallpaper;
+  final Future<void> Function(String) onWallpaperChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -38,12 +43,25 @@ class _SettingsPageState extends State<SettingsPage> {
 
   late bool _checkOnLaunch = widget.checkOnLaunch;
   late Future<String> _appIcon = widget.loadAppIcon();
+  late String _wallpaper = widget.wallpaper;
 
   Future<void> _setAppIcon(String value) async {
     setState(() {
       _appIcon = Future.value(value);
     });
     await widget.onAppIconChanged(value);
+  }
+
+  /// Petite fenêtre de choix du fond, appliqué dès qu'une vignette est
+  /// touchée.
+  Future<void> _pickWallpaper() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (_) => _WallpaperDialog(selected: _wallpaper),
+    );
+    if (choice == null || choice == _wallpaper) return;
+    setState(() => _wallpaper = choice);
+    await widget.onWallpaperChanged(choice);
   }
 
   Future<void> _setCheckOnLaunch(bool value) async {
@@ -164,6 +182,60 @@ class _SettingsPageState extends State<SettingsPage> {
               },
             ),
             const SizedBox(height: 22),
+            const _SectionTitle('Fond d’écran'),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Choisis l’image affichée derrière la discussion.',
+                style: TextStyle(fontSize: 12, color: AppTheme.muted),
+              ),
+            ),
+            Material(
+              color: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: const BorderSide(color: AppTheme.outline),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
+                leading: WallpaperThumbnail(
+                  wallpaper: wallpaperFor(_wallpaper),
+                ),
+                title: const Text(
+                  'Fond d’écran',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.text,
+                  ),
+                ),
+                subtitle: Text(
+                  wallpaperFor(_wallpaper).label,
+                  style: const TextStyle(fontSize: 12, color: AppTheme.muted),
+                ),
+                trailing: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Choisir',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                    SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, color: AppTheme.muted),
+                  ],
+                ),
+                onTap: _pickWallpaper,
+              ),
+            ),
+            const SizedBox(height: 22),
             const _SectionTitle('Mises à jour'),
             Container(
               decoration: BoxDecoration(
@@ -208,6 +280,174 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Petite fenêtre de sélection : quatre vignettes, un toucher applique le
+/// fond et referme la fenêtre.
+class _WallpaperDialog extends StatelessWidget {
+  const _WallpaperDialog({required this.selected});
+
+  final String selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      surfaceTintColor: Colors.transparent,
+      scrollable: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: const BorderSide(color: AppTheme.outline),
+      ),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+      title: const Text(
+        'Fond d’écran',
+        style: TextStyle(
+          fontSize: 17,
+          fontWeight: FontWeight.w800,
+          color: AppTheme.text,
+        ),
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+      content: SizedBox(
+        width: 300,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var index = 0; index < wallpapers.length; index += 2) ...[
+              if (index > 0) const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: AspectRatio(
+                      aspectRatio: 0.9,
+                      child: _WallpaperChoice(
+                        wallpaper: wallpapers[index],
+                        selected: wallpapers[index].id == selected,
+                        onTap: () =>
+                            Navigator.of(context).pop(wallpapers[index].id),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: index + 1 < wallpapers.length
+                        ? AspectRatio(
+                            aspectRatio: 0.9,
+                            child: _WallpaperChoice(
+                              wallpaper: wallpapers[index + 1],
+                              selected: wallpapers[index + 1].id == selected,
+                              onTap: () =>
+                                  Navigator.of(context)
+                                      .pop(wallpapers[index + 1].id),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Fermer'),
+        ),
+      ],
+    );
+  }
+}
+
+class _WallpaperChoice extends StatelessWidget {
+  const _WallpaperChoice({
+    required this.wallpaper,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final WallpaperOption wallpaper;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = wallpaper.asset;
+    return Material(
+      color: AppTheme.surfaceHigh,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? AppTheme.accent : AppTheme.outline,
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (asset == null)
+                      const ColoredBox(
+                        color: AppTheme.background,
+                        child: Icon(
+                          Icons.dark_mode_rounded,
+                          size: 26,
+                          color: AppTheme.muted,
+                        ),
+                      )
+                    else
+                      Image.asset(asset, fit: BoxFit.cover, cacheWidth: 360),
+                    if (selected)
+                      Align(
+                        alignment: Alignment.topRight,
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: const BoxDecoration(
+                              color: AppTheme.accent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.check_rounded,
+                              size: 14,
+                              color: Color(0xFF04231F),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 7, 10, 9),
+                child: Text(
+                  wallpaper.label,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textSoft,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

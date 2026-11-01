@@ -8,6 +8,15 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.8.0',
+      title: 'Choisis ton fond d’écran',
+      icon: Icons.wallpaper_rounded,
+      changes: [
+        'Les paramètres proposent un sélecteur de fond d’écran, avec le fond sombre d’origine et trois visuels WORLD-AI.',
+        'Le fond choisi est mémorisé et s’affiche derrière la discussion et les mises à jour.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.6.4',
       title: 'Nouvelle icône WORLD-AI',
       icon: Icons.image_outlined,

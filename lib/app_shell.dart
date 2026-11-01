@@ -6,6 +6,7 @@ import 'pages/updates_page.dart';
 import 'pages/whats_new_page.dart';
 import 'settings_store.dart';
 import 'theme/app_theme.dart';
+import 'wallpapers.dart';
 import 'update/update_controller.dart';
 import 'update/update_ui.dart';
 
@@ -43,13 +44,27 @@ class _AppShellState extends State<AppShell> {
 
   int _index = 0;
   bool _checkOnLaunch = true;
+  String _wallpaper = wallpapers.first.id;
 
   @override
   void initState() {
     super.initState();
     widget.controller.loadInstalledVersion();
     _checkOnLaunch = widget.checkUpdatesOnStart;
+    _loadWallpaper();
     if (widget.checkUpdatesOnStart) _loadPreferences();
+  }
+
+  /// Le fond est restauré à l'ouverture, avant toute interaction.
+  Future<void> _loadWallpaper() async {
+    final stored = await _settings.loadWallpaper();
+    if (!mounted) return;
+    if (stored != _wallpaper) setState(() => _wallpaper = stored);
+  }
+
+  Future<void> _setWallpaper(String value) async {
+    setState(() => _wallpaper = value);
+    await _settings.saveWallpaper(value);
   }
 
   /// Les préférences décident si la vérification automatique a lieu ; elles
@@ -120,6 +135,8 @@ class _AppShellState extends State<AppShell> {
               setState(() => _checkOnLaunch = value),
           loadAppIcon: widget.loadAppIcon ?? _settings.loadAppIcon,
           onAppIconChanged: widget.onAppIconChanged ?? _saveAppIcon,
+          wallpaper: _wallpaper,
+          onWallpaperChanged: _setWallpaper,
         ),
       ),
     );
@@ -179,11 +196,17 @@ class _AppShellState extends State<AppShell> {
         onUpdate: _updateFromDrawer,
         onSettings: _openSettings,
       ),
-      body: IndexedStack(
-        index: _index,
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          const ChatPage(),
-          UpdatesPage(controller: controller),
+          WallpaperBackground(id: _wallpaper),
+          IndexedStack(
+            index: _index,
+            children: [
+              const ChatPage(),
+              UpdatesPage(controller: controller),
+            ],
+          ),
         ],
       ),
     );

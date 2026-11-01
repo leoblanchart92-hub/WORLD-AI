@@ -30,6 +30,7 @@ class _FakeService extends GithubUpdateService {
 class _MemorySettings extends SettingsStore {
   bool checkOnLaunch = true;
   String appIcon = 'default';
+  String wallpaper = 'default';
 
   @override
   Future<bool> loadCheckOnLaunch({bool fallback = true}) async => checkOnLaunch;
@@ -42,6 +43,13 @@ class _MemorySettings extends SettingsStore {
 
   @override
   Future<void> saveAppIcon(String value) async => appIcon = value;
+
+  @override
+  Future<String> loadWallpaper({String fallback = 'default'}) async =>
+      wallpaper;
+
+  @override
+  Future<void> saveWallpaper(String value) async => wallpaper = value;
 }
 
 AppUpdate _pendingUpdate() => AppUpdate(
@@ -85,7 +93,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.6.2'), findsOneWidget);
+    expect(find.text('Version 1.8.0'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -105,7 +113,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.6.2'), findsOneWidget);
+    expect(find.text('Version 1.8.0'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (
@@ -133,6 +141,41 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(settings.appIcon, 'image3');
+  });
+
+  testWidgets('choisit et mémorise un fond d’écran', (tester) async {
+    final settings = _MemorySettings();
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paramètres'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fond d’écran'));
+    await tester.pumpAndSettle();
+
+    final dialog = find.byType(AlertDialog);
+    expect(dialog, findsOneWidget);
+    for (final label in ['Aucun', 'Fond 1', 'Fond 2', 'Fond 3']) {
+      expect(
+        find.descendant(of: dialog, matching: find.text(label)),
+        findsOneWidget,
+      );
+    }
+
+    await tester.tap(find.text('Fond 2'));
+    await tester.pumpAndSettle();
+
+    expect(settings.wallpaper, 'image5');
+    expect(find.text('Fond 2'), findsOneWidget);
   });
 
   testWidgets('envoie un message depuis la barre', (tester) async {
