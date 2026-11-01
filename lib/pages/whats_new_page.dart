@@ -8,6 +8,16 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.9.0',
+      title: 'L’IA répond vraiment',
+      icon: Icons.auto_awesome_rounded,
+      changes: [
+        'Les messages envoyés dans la discussion reçoivent désormais une réponse de l’IA Groq.',
+        'Aucune clé n’est stockée dans l’application : un relais WORLD-AI la garde côté serveur.',
+        'Aucune limite de messages : la discussion reste ouverte aussi longtemps que tu veux.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.8.1',
       title: 'Six icônes au choix',
       icon: Icons.apps_rounded,

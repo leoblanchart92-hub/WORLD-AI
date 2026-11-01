@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'ai/ai_client.dart';
 import 'app_shell.dart';
 import 'settings_store.dart';
 import 'theme/app_theme.dart';
@@ -17,6 +18,7 @@ class WorldAiApp extends StatefulWidget {
     this.updateService,
     this.checkUpdatesOnStart = true,
     this.settingsStore,
+    this.aiService,
   });
 
   /// Injecté par les tests pour rester hors ligne.
@@ -27,6 +29,9 @@ class WorldAiApp extends StatefulWidget {
 
   /// Injecté par les tests ; sinon les préférences viennent du disque.
   final SettingsStore? settingsStore;
+
+  /// Injecté par les tests ; sinon le relais hébergé répond.
+  final AiService? aiService;
 
   @override
   State<WorldAiApp> createState() => _WorldAiAppState();
@@ -81,6 +86,7 @@ class _WorldAiAppState extends State<WorldAiApp> {
         controller: _controller,
         checkUpdatesOnStart: widget.checkUpdatesOnStart,
         settingsStore: _settings,
+        aiService: widget.aiService,
         loadAppIcon: _settings.loadAppIcon,
         onAppIconChanged: (icon) async {
           await _settings.saveAppIcon(icon);

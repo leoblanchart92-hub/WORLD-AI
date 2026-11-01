@@ -1,0 +1,10 @@
+# Configuration locale uniquement : sert à lancer le relais avec `wrangler dev`.
+# Le déploiement hébergé utilise relay/deploy.json.
+name = "world-ai-relay"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "world-ai-relay-local"
+database_id = "00000000-0000-0000-0000-000000000000"

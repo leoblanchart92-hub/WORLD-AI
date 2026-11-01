@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:world_ai/ai/ai_client.dart';
 import 'package:world_ai/main.dart';
 import 'package:world_ai/settings_store.dart';
 import 'package:world_ai/update/app_version.dart';
@@ -24,6 +25,21 @@ class _FakeService extends GithubUpdateService {
         installed,
         update: status == UpdateStatus.updateAvailable ? update : null,
       );
+}
+
+/// IA hors ligne : répond immédiatement, sans relais ni réseau.
+class _FakeAi implements AiService {
+  _FakeAi({this.failure});
+
+  final AiFailure? failure;
+  final List<List<AiMessage>> calls = [];
+
+  @override
+  Future<AiReply> send(List<AiMessage> messages) async {
+    calls.add(messages);
+    if (failure != null) throw failure!;
+    return const AiReply(text: 'Réponse de test', remaining: 59);
+  }
 }
 
 /// Préférences en mémoire : les tests n'ont pas de stockage sur disque.
@@ -63,8 +79,7 @@ void main() {
     expect(find.text('Discussion'), findsOneWidget);
     expect(find.text('WORLD-AI v1.3.0'), findsOneWidget);
     expect(find.text('Commence la discussion'), findsOneWidget);
-    expect(find.text('Choisir une IA'), findsOneWidget);
-    expect(find.text('Ajoute prochainement'), findsOneWidget);
+    expect(find.text('Groq · GPT-OSS 120B'), findsOneWidget);
     expect(find.text('Écris un message…'), findsOneWidget);
     // La mise à jour n'est plus dans la barre supérieure.
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);
@@ -85,7 +100,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.8.1'), findsOneWidget);
+    expect(find.text('Version 1.9.0'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -105,7 +120,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.8.1'), findsOneWidget);
+    expect(find.text('Version 1.9.0'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (
@@ -155,9 +170,17 @@ void main() {
     expect(find.text('Icône 6'), findsOneWidget);
   });
 
-  testWidgets('envoie un message depuis la barre', (tester) async {
+  testWidgets('envoie un message et affiche la réponse de l’IA', (
+    tester,
+  ) async {
+    final ai = _FakeAi();
     await tester.pumpWidget(
-      WorldAiApp(updateService: _FakeService(), checkUpdatesOnStart: false),
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: _MemorySettings(),
+        aiService: ai,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -167,7 +190,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bonjour WORLD-AI'), findsOneWidget);
+    expect(find.text('Réponse de test'), findsOneWidget);
     expect(find.text('Commence la discussion'), findsNothing);
+    expect(ai.calls.single.last.content, 'Bonjour WORLD-AI');
+  });
+
+  testWidgets('affiche l’erreur du relais et permet de réessayer', (
+    tester,
+  ) async {
+    final ai = _FakeAi(
+      failure: const AiFailure('Limite quotidienne atteinte.', canRetry: false),
+    );
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: _MemorySettings(),
+        aiService: ai,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Bonjour');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Limite quotidienne atteinte.'), findsOneWidget);
+    expect(find.text('Réessayer'), findsNothing);
   });
 
   testWidgets('garde mise à jour et paramètres en bas du menu', (

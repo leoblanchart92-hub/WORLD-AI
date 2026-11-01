@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../ai/ai_client.dart';
 import '../theme/app_theme.dart';
 
 /// Écran principal : fil de discussion et barre de saisie en bas.
 ///
-/// Les messages restent en mémoire pour la session : aucun service distant
-/// n'est branché pour l'instant, donc rien n'est envoyé nulle part.
+/// Les messages partent vers le relais WORLD-AI, qui les transmet à Groq avec
+/// sa propre clé : l'application n'en contient aucune.
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key});
+  const ChatPage({super.key, required this.ai});
+
+  final AiService ai;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -16,7 +19,9 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final List<String> _messages = [];
+  final List<AiMessage> _history = [];
+  AiFailure? _failure;
+  bool _sending = false;
   bool _canSend = false;
 
   @override
@@ -34,18 +39,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _handleInputChanged() {
-    final canSend = _input.text.trim().isNotEmpty;
+    final canSend = _input.text.trim().isNotEmpty && !_sending;
     if (canSend != _canSend) setState(() => _canSend = canSend);
   }
 
-  void _send() {
-    final text = _input.text.trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _messages.add(text);
-      _input.clear();
-      _canSend = false;
-    });
+  void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
       _scroll.animateTo(
@@ -56,23 +54,83 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  Future<void> _send() async {
+    final text = _input.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() {
+      _history.add(AiMessage.user(text));
+      _input.clear();
+      _canSend = false;
+      _failure = null;
+      _sending = true;
+    });
+    _scrollToEnd();
+    await _request();
+  }
+
+  /// Envoie tout l'historique : le relais est sans état, il reçoit le contexte.
+  Future<void> _request() async {
+    try {
+      final reply = await widget.ai.send(List<AiMessage>.of(_history));
+      if (!mounted) return;
+      setState(() {
+        _history.add(AiMessage.assistant(reply.text));
+        _sending = false;
+        _failure = null;
+      });
+      _scrollToEnd();
+    } on AiFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _failure = failure;
+      });
+      _scrollToEnd();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _failure = const AiFailure('L’IA n’a pas pu répondre. Réessaie.');
+      });
+      _scrollToEnd();
+    }
+  }
+
+  Future<void> _retry() async {
+    if (_sending || _history.isEmpty) return;
+    setState(() {
+      _failure = null;
+      _sending = true;
+    });
+    await _request();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showEmpty = _history.isEmpty && !_sending;
+
     return Column(
       children: [
         Expanded(
-          child: _messages.isEmpty
+          child: showEmpty
               ? const _EmptyChat()
               : ListView.builder(
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  itemCount: _messages.length,
-                  itemBuilder: (context, index) => _Bubble(
-                    text: _messages[index],
-                  ),
+                  itemCount: _history.length + (_sending ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index >= _history.length) return const _Thinking();
+                    return _Bubble(message: _history[index]);
+                  },
                 ),
         ),
-        _Composer(controller: _input, canSend: _canSend, onSend: _send),
+        if (_failure != null)
+          _FailureCard(failure: _failure!, onRetry: _retry),
+        _Composer(
+          controller: _input,
+          canSend: _canSend,
+          onSend: _send,
+        ),
       ],
     );
   }
@@ -113,8 +171,8 @@ class _EmptyChat extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Écris dans la barre ci-dessous. Les messages restent sur cet '
-              'appareil : aucun service ne les traite pour l\'instant.',
+              'Écris ton premier message. Tes échanges passent par le relais '
+              'WORLD-AI, qui les transmet à l’IA Groq.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12.5,
@@ -130,37 +188,134 @@ class _EmptyChat extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.text});
+  const _Bubble({required this.message});
 
-  final String text;
+  final AiMessage message;
 
   @override
   Widget build(BuildContext context) {
+    final fromUser = message.role == 'user';
+
     return Align(
-      alignment: Alignment.centerRight,
+      alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.sizeOf(context).width * 0.78,
         ),
-        decoration: const BoxDecoration(
-          gradient: AppTheme.heroGradient,
+        decoration: BoxDecoration(
+          gradient: fromUser ? AppTheme.heroGradient : null,
+          color: fromUser ? null : AppTheme.surface,
+          border: fromUser ? null : Border.all(color: AppTheme.outline),
           borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(18),
-            topRight: Radius.circular(18),
-            bottomLeft: Radius.circular(18),
-            bottomRight: Radius.circular(6),
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: Radius.circular(fromUser ? 18 : 6),
+            bottomRight: Radius.circular(fromUser ? 6 : 18),
           ),
         ),
         child: Text(
-          text,
-          style: const TextStyle(
+          message.content,
+          style: TextStyle(
             fontSize: 14,
             height: 1.4,
-            color: Colors.white,
+            color: fromUser ? Colors.white : AppTheme.textSoft,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Bulle d'attente, volontairement statique : aucune animation continue.
+class _Thinking extends StatelessWidget {
+  const _Thinking();
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppTheme.outline),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.auto_awesome_rounded,
+              size: 15,
+              color: AppTheme.accent,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'WORLD-AI rédige…',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontStyle: FontStyle.italic,
+                color: AppTheme.muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FailureCard extends StatelessWidget {
+  const _FailureCard({required this.failure, required this.onRetry});
+
+  final AiFailure failure;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A1B22),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF5A3140)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 18,
+            color: Color(0xFFF3A5B4),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              failure.message,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.4,
+                color: Color(0xFFF6C9D3),
+              ),
+            ),
+          ),
+          if (failure.canRetry)
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.accent,
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              child: const Text('Réessayer'),
+            ),
+        ],
       ),
     );
   }
@@ -196,7 +351,7 @@ class _Composer extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const _AiSelectorPlaceholder(),
+              const _AiBadge(),
               const SizedBox(height: 10),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -251,8 +406,9 @@ class _Composer extends StatelessWidget {
   }
 }
 
-class _AiSelectorPlaceholder extends StatelessWidget {
-  const _AiSelectorPlaceholder();
+/// IA active : Groq, par l'intermédiaire du relais WORLD-AI.
+class _AiBadge extends StatelessWidget {
+  const _AiBadge();
 
   @override
   Widget build(BuildContext context) {
@@ -267,7 +423,7 @@ class _AiSelectorPlaceholder extends StatelessWidget {
       child: Row(
         children: [
           const Icon(
-            Icons.auto_awesome_outlined,
+            Icons.auto_awesome_rounded,
             size: 18,
             color: AppTheme.accent,
           ),
@@ -278,7 +434,7 @@ class _AiSelectorPlaceholder extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Choisir une IA',
+                  'Groq · GPT-OSS 120B',
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
@@ -287,13 +443,12 @@ class _AiSelectorPlaceholder extends StatelessWidget {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Ajoute prochainement',
+                  'Relais WORLD-AI · sans limite de messages',
                   style: TextStyle(fontSize: 11, color: AppTheme.muted),
                 ),
               ],
             ),
           ),
-          Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.muted),
         ],
       ),
     );

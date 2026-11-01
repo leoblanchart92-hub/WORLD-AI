@@ -122,6 +122,7 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `1.9.0` | Discussion connectée à l’IA Groq via un relais hébergé : la clé reste côté serveur. |
 | `1.3.0` | Publication de test : valide la mise à jour automatique depuis une 1.2.0 installée. |
 | `1.2.0` | Première version signée avec la clé de release : les mises à jour suivantes s'installent par-dessus sans réinstallation. |
 | `1.1.0` | Système de mise à jour (vérification au lancement, téléchargement avec progression, installeur Android) et CI de compilation. |
@@ -213,6 +214,35 @@ bash scripts/prepare-signing.sh
 Conserver `release.jks` en lieu sûr : perdre cette clé impose une réinstallation
 manuelle de l'application sur les appareils concernés.
 
+## L’IA et la clé Groq
+
+La discussion interroge un **relais** ([`relay/worker.js`](relay/worker.js)),
+un Worker hébergé qui détient la clé Groq et relaie les appels. L’APK ne
+contient **aucune clé** : un `.env` ou un `--dart-define` embarqué serait
+lisible par n’importe qui, et le dépôt est public.
+
+| Élément | Rôle |
+| --- | --- |
+| `relay/worker.js` | Relais : reçoit l’historique, ajoute la clé, appelle Groq. |
+| `relay/wrangler.toml` | Test local uniquement (`wrangler dev`, D1 locale). |
+| `relay/deploy.json` | Manifeste utilisé pour l’hébergement. |
+| `relay/local-check.mjs` | Vérifications hors ligne du relais (`node relay/local-check.mjs`). |
+| `lib/ai/ai_client.dart` | Client de l’application, sans aucune clé. |
+
+**Poser la clé** : tableau de bord d’hébergement → projet *WORLD-AI relay* →
+*Secrets* → nom `GROQ_API_KEY`, valeur créée sur
+[console.groq.com/keys](https://console.groq.com/keys). La valeur n’est jamais
+écrite dans le dépôt ni dans l’application. `/health` renvoie alors
+`{"configured":true}`.
+
+Garde-fous du relais : appels de navigateur refusés (en-tête `Origin`), modèles
+limités à `openai/gpt-oss-120b` et `openai/gpt-oss-20b`, **aucune limite de
+messages** (`DEVICE_DAILY_LIMIT` et `GLOBAL_DAILY_LIMIT` à `0` ; une valeur > 0
+réactive le plafond), 1 024 jetons maximum par réponse. L’usage reste compté
+anonymement dans D1, sans jamais bloquer une requête.
+
+Pour viser un autre relais : `--dart-define=AI_RELAY_URL=https://…`.
+
 ## Développement local
 
 Prérequis : Flutter stable (Dart ≥ 3.13) et un JDK 17.
@@ -234,7 +264,9 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 
 ```
 lib/main.dart              écran d'accueil + bouton de mise à jour
+lib/ai/                    client du relais IA (aucune clé embarquée)
 lib/update/                système de mise à jour (voir tableau ci-dessus)
+relay/                     relais Groq hébergé (voir « L’IA et la clé Groq »)
 android/                   projet Android, permissions réseau et installation
 test/                      tests widgets + tests de comparaison de versions
 .github/workflows/         compilation CI et publication des releases

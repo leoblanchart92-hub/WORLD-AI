@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ai/ai_client.dart';
 import 'pages/chat_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/updates_page.dart';
@@ -18,10 +19,14 @@ class AppShell extends StatefulWidget {
     this.settingsStore,
     this.loadAppIcon,
     this.onAppIconChanged,
+    this.aiService,
   });
 
   final UpdateController controller;
   final bool checkUpdatesOnStart;
+
+  /// Injection de l'IA pour les tests ; sinon le relais hébergé est utilisé.
+  final AiService? aiService;
 
   /// Injecté par les tests ; sinon les préférences viennent du disque.
   final SettingsStore? settingsStore;
@@ -40,6 +45,8 @@ class _AppShellState extends State<AppShell> {
   static const Duration _preferenceTimeout = Duration(milliseconds: 800);
 
   late final SettingsStore _settings = widget.settingsStore ?? SettingsStore();
+  late final AiService _ai = widget.aiService ??
+      AiClient(deviceId: _settings.deviceId);
 
   int _index = 0;
   bool _checkOnLaunch = true;
@@ -182,7 +189,7 @@ class _AppShellState extends State<AppShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          const ChatPage(),
+          ChatPage(ai: _ai),
           UpdatesPage(controller: controller),
         ],
       ),
