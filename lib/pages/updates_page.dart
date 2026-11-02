@@ -44,7 +44,8 @@ class UpdatesPage extends StatelessWidget {
           const _InfoCard(
             icon: Icons.shield_rounded,
             title: 'Signature stable',
-            message: 'Chaque APK est signé avec la même clé de release : '
+            message:
+                'Chaque APK est signé avec la même clé de release : '
                 'Android accepte la mise à jour par-dessus l\'application '
                 'existante, sans perdre les données.',
           ),
@@ -260,13 +261,13 @@ class _StatusPill extends StatelessWidget {
     final (Color color, String label) = switch (controller.phase) {
       UpdatePhase.checking => (AppTheme.seed, 'Vérification en cours'),
       UpdatePhase.available => (
-          AppTheme.accent,
-          'Mise à jour ${controller.update?.latestVersion} disponible',
-        ),
+        AppTheme.accent,
+        'Mise à jour ${controller.update?.latestVersion} disponible',
+      ),
       UpdatePhase.downloading => (
-          AppTheme.accent,
-          'Téléchargement ${((controller.progress ?? 0) * 100).round()} %',
-        ),
+        AppTheme.accent,
+        'Téléchargement ${((controller.progress ?? 0) * 100).round()} %',
+      ),
       UpdatePhase.installing => (AppTheme.accent, 'Installation en cours'),
       UpdatePhase.upToDate => (AppTheme.success, 'À jour'),
       UpdatePhase.noRelease => (AppTheme.muted, 'Aucune release publiée'),

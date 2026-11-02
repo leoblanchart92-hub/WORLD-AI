@@ -122,6 +122,7 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `2.0.0` | Comptes WORLD-AI : inscription, connexion, profil et déconnexion depuis le menu. |
 | `1.9.1` | Choix entre les trois IA Groq francophones : GPT-OSS 120B, GPT-OSS 20B et Qwen3 27B. |
 | `1.9.0` | Discussion connectée à l’IA Groq via un relais hébergé : la clé reste côté serveur. |
 | `1.3.0` | Publication de test : valide la mise à jour automatique depuis une 1.2.0 installée. |
@@ -246,6 +247,38 @@ anonymement dans D1, sans jamais bloquer une requête.
 
 Pour viser un autre relais : `--dart-define=AI_RELAY_URL=https://…`.
 
+## Les comptes
+
+Les comptes vivent dans la base D1 du relais : aucune dépendance à un service
+d’authentification tiers, et la discussion reste utilisable sans compte.
+
+| Route | Rôle |
+| --- | --- |
+| `POST /auth/register` | Crée le compte, renvoie un jeton de session. |
+| `POST /auth/login` | Vérifie le mot de passe, ouvre une session. |
+| `GET /auth/me` | Retourne le compte du jeton fourni. |
+| `POST /auth/logout` | Ferme la session côté serveur. |
+
+Règles de sécurité :
+
+- mot de passe haché en **PBKDF2-SHA256** (100 000 itérations, sel aléatoire par
+  compte) ; le clair n’est jamais écrit en base, ni journalisé ;
+- jeton de session de 32 octets, stocké seulement sous forme de condensat
+  SHA-256, valable 90 jours ; une déconnexion le supprime ;
+- même message et même coût pour une adresse inconnue et un mauvais mot de
+  passe, afin de ne pas révéler quelles adresses sont inscrites ;
+- huit échecs par adresse et par IP bloquent les tentatives pendant quinze
+  minutes ;
+- adresse normalisée en minuscules, mot de passe de 8 à 200 caractères ;
+- `/auth/*` refuse aussi les requêtes portant un en-tête `Origin`.
+
+Côté application, `lib/auth/auth_client.dart` appelle ces routes et
+`lib/pages/account_page.dart` porte les formulaires. Le jeton et l’adresse sont
+enregistrés dans les préférences locales (`SettingsStore`) pour éviter un
+aller-retour réseau au lancement ; le mot de passe, lui, n’est jamais conservé.
+Le jeton est joint aux messages de la discussion (`Authorization: Bearer …`),
+mais l’IA répond aussi sans compte.
+
 ## Développement local
 
 Prérequis : Flutter stable (Dart ≥ 3.13) et un JDK 17.
@@ -268,6 +301,8 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 ```
 lib/main.dart              écran d'accueil + bouton de mise à jour
 lib/ai/                    client du relais IA (aucune clé embarquée)
+lib/auth/                  client des comptes (connexion, session)
+lib/pages/account_page.dart  formulaires de compte et profil
 lib/update/                système de mise à jour (voir tableau ci-dessus)
 relay/                     relais Groq hébergé (voir « L’IA et la clé Groq »)
 android/                   projet Android, permissions réseau et installation

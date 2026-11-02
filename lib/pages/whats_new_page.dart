@@ -8,6 +8,17 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '2.0.0',
+      title: 'Ton compte WORLD-AI',
+      icon: Icons.person_rounded,
+      changes: [
+        'Crée un compte avec ton adresse e-mail et un mot de passe : tu restes connecté d’une session à l’autre.',
+        'Le compte se gère depuis le menu latéral : connexion, profil, déconnexion.',
+        'Le mot de passe est haché côté serveur et la session vit sur ton appareil ; aucune clé n’est stockée dans l’application.',
+        'La discussion reste utilisable sans compte, comme avant.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.9.2',
       title: 'Choisir l’IA en deux touches',
       icon: Icons.tune_rounded,

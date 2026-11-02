@@ -25,8 +25,8 @@ enum UpdatePhase {
 /// de page pendant le transfert.
 class UpdateController extends ChangeNotifier {
   UpdateController({GithubUpdateService? service})
-      : _service = service ?? GithubUpdateService(),
-        _ownsService = service == null;
+    : _service = service ?? GithubUpdateService(),
+      _ownsService = service == null;
 
   final GithubUpdateService _service;
   final bool _ownsService;

@@ -35,18 +35,19 @@ class AppTheme {
   );
 
   static ThemeData dark() {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: seed,
-      brightness: Brightness.dark,
-    ).copyWith(
-      primary: seed,
-      onPrimary: Colors.white,
-      secondary: accent,
-      onSecondary: const Color(0xFF04231F),
-      surface: surface,
-      onSurface: text,
-      error: const Color(0xFFFF6B81),
-    );
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: seed,
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: seed,
+          onPrimary: Colors.white,
+          secondary: accent,
+          onSecondary: const Color(0xFF04231F),
+          surface: surface,
+          onSurface: text,
+          error: const Color(0xFFFF6B81),
+        );
 
     return ThemeData(
       useMaterial3: true,
@@ -110,9 +111,7 @@ class AppTheme {
         contentTextStyle: const TextStyle(color: text, fontSize: 13),
         actionTextColor: accent,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
         color: accent,

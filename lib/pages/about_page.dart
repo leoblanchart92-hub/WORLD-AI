@@ -85,7 +85,8 @@ class AboutPage extends StatelessWidget {
           const _InfoRow(
             icon: Icons.install_desktop_rounded,
             label: 'Installation',
-            value: 'APK signé, remplace la version précédente sans perte de '
+            value:
+                'APK signé, remplace la version précédente sans perte de '
                 'données',
           ),
           const _InfoRow(

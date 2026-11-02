@@ -37,19 +37,52 @@ const SYSTEM_PROMPT =
   'Réponds en français sauf si l’utilisateur écrit dans une autre langue. ' +
   'Reste bref, concret, et n’invente jamais une information.';
 
+// Comptes : mot de passe haché en PBKDF2-SHA256, jamais stocké en clair, et
+// jetons de session gardés sous forme de condensat (le clair ne vit que dans
+// l’application).
+const PBKDF2_ITERATIONS = 100000;
+const SESSION_DAYS = 90;
+const MAX_FAILED_ATTEMPTS = 8;
+const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_EMAIL_CHARS = 190;
+const MIN_PASSWORD_CHARS = 8;
+const MAX_PASSWORD_CHARS = 200;
+
 let schemaReady = false;
 
 async function ensureSchema(db) {
   if (schemaReady) return;
-  await db
-    .prepare(
+  await db.batch([
+    db.prepare(
       'CREATE TABLE IF NOT EXISTS usage (' +
         'day TEXT NOT NULL, ' +
         'device TEXT NOT NULL, ' +
         'count INTEGER NOT NULL DEFAULT 0, ' +
         'PRIMARY KEY (day, device))',
-    )
-    .run();
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS users (' +
+        'id TEXT PRIMARY KEY, ' +
+        'email TEXT NOT NULL UNIQUE, ' +
+        'hash TEXT NOT NULL, ' +
+        'salt TEXT NOT NULL, ' +
+        'iterations INTEGER NOT NULL, ' +
+        'created_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS sessions (' +
+        'token TEXT PRIMARY KEY, ' +
+        'user_id TEXT NOT NULL, ' +
+        'created_at INTEGER NOT NULL, ' +
+        'expires_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS auth_attempts (' +
+        'key TEXT PRIMARY KEY, ' +
+        'count INTEGER NOT NULL DEFAULT 0, ' +
+        'reset_at INTEGER NOT NULL)',
+    ),
+  ]);
   schemaReady = true;
 }
 
@@ -102,7 +135,10 @@ function statusPage(configured) {
       '<p style="margin-top:14px">' +
       hint +
       '</p>' +
-      '<dl><dt>Point d’entrée</dt><dd><code>POST /v1/chat</code></dd>' +
+      '<dl><dt>Discussion</dt><dd><code>POST /v1/chat</code></dd>' +
+      '<dt>Comptes</dt><dd><code>POST /auth/register</code>, ' +
+      '<code>POST /auth/login</code>, <code>GET /auth/me</code>, ' +
+      '<code>POST /auth/logout</code></dd>' +
       '<dt>Modèles</dt><dd>openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b</dd>' +
       '<dt>Quota</dt><dd>Aucune limite de messages</dd>' +
       '<dt>État</dt><dd><code>/health</code></dd></dl>' +
@@ -158,6 +194,265 @@ function readMessages(body) {
   }
   if (messages[messages.length - 1].role !== 'user') return null;
   return messages;
+}
+
+/* ------------------------------------------------------------------ comptes */
+
+function toHex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function fromHex(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function randomHex(size) {
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return toHex(bytes);
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+async function sha256(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return toHex(new Uint8Array(digest));
+}
+
+async function hashPassword(password, saltHex, iterations) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: fromHex(saltHex), iterations, hash: 'SHA-256' },
+    key,
+    256,
+  );
+  return toHex(new Uint8Array(bits));
+}
+
+/** Comparaison à temps constant, pour ne pas fuiter le condensat par timing. */
+function sameHash(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Normalise l’adresse : minuscules, sans espaces autour. */
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  if (email.length < 5 || email.length > MAX_EMAIL_CHARS) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(email)) return null;
+  return email;
+}
+
+function readPassword(value) {
+  if (typeof value !== 'string') return null;
+  if (value.length < MIN_PASSWORD_CHARS || value.length > MAX_PASSWORD_CHARS) {
+    return null;
+  }
+  return value;
+}
+
+function clientKey(request) {
+  const ip =
+    request.headers.get('cf-connecting-ip') ||
+    request.headers.get('x-forwarded-for') ||
+    'inconnu';
+  return ip.split(',')[0].trim().slice(0, 64);
+}
+
+/** Bloque les essais en série sur un même compte ou une même adresse IP. */
+async function attemptsLeft(db, key) {
+  const row = await db
+    .prepare('SELECT count, reset_at FROM auth_attempts WHERE key = ?')
+    .bind(key)
+    .first();
+  if (!row || row.reset_at <= Date.now()) return MAX_FAILED_ATTEMPTS;
+  return Math.max(0, MAX_FAILED_ATTEMPTS - row.count);
+}
+
+async function noteFailure(db, key) {
+  const resetAt = Date.now() + ATTEMPT_WINDOW_MS;
+  await db
+    .prepare(
+      'INSERT INTO auth_attempts (key, count, reset_at) VALUES (?, 1, ?) ' +
+        'ON CONFLICT(key) DO UPDATE SET count = count + 1, reset_at = excluded.reset_at',
+    )
+    .bind(key, resetAt)
+    .run();
+}
+
+async function clearFailures(db, key) {
+  await db.prepare('DELETE FROM auth_attempts WHERE key = ?').bind(key).run();
+}
+
+function publicUser(row) {
+  return { id: row.id, email: row.email, createdAt: row.created_at };
+}
+
+/** Ouvre une session et renvoie le jeton en clair, à usage unique côté app. */
+async function openSession(db, userId) {
+  const token = randomToken();
+  const now = Date.now();
+  await db
+    .prepare(
+      'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+    )
+    .bind(await sha256(token), userId, now, now + SESSION_DAYS * 86400000)
+    .run();
+  return token;
+}
+
+/** Retrouve le compte derrière un en-tête Authorization: Bearer … */
+async function currentUser(request, db) {
+  const header = request.headers.get('authorization') || '';
+  const match = /^Bearer\s+([A-Za-z0-9_-]{20,128})$/.exec(header.trim());
+  if (!match) return null;
+  const session = await db
+    .prepare('SELECT user_id, expires_at FROM sessions WHERE token = ?')
+    .bind(await sha256(match[1]))
+    .first();
+  if (!session || session.expires_at <= Date.now()) return null;
+  const user = await db
+    .prepare('SELECT id, email, created_at FROM users WHERE id = ?')
+    .bind(session.user_id)
+    .first();
+  return user || null;
+}
+
+async function readAuthBody(request) {
+  return request.json().catch(() => null);
+}
+
+async function register(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+
+  const body = await readAuthBody(request);
+  const email = normalizeEmail(body?.email);
+  const password = readPassword(body?.password);
+  if (!email) {
+    return fail(400, 'bad_email', 'Adresse e-mail invalide.');
+  }
+  if (!password) {
+    return fail(
+      400,
+      'bad_password',
+      `Le mot de passe doit faire entre ${MIN_PASSWORD_CHARS} et ${MAX_PASSWORD_CHARS} caractères.`,
+    );
+  }
+
+  const key = `reg:${clientKey(request)}`;
+  if ((await attemptsLeft(env.DB, key)) === 0) {
+    return fail(429, 'too_many', 'Trop de tentatives. Réessaie dans un quart d’heure.');
+  }
+  await noteFailure(env.DB, key);
+
+  const existing = await env.DB
+    .prepare('SELECT id FROM users WHERE email = ?')
+    .bind(email)
+    .first();
+  if (existing) {
+    return fail(409, 'email_taken', 'Un compte existe déjà avec cette adresse.');
+  }
+
+  const id = randomHex(12);
+  const salt = randomHex(16);
+  const hash = await hashPassword(password, salt, PBKDF2_ITERATIONS);
+  await env.DB
+    .prepare(
+      'INSERT INTO users (id, email, hash, salt, iterations, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .bind(id, email, hash, salt, PBKDF2_ITERATIONS, Date.now())
+    .run();
+
+  const token = await openSession(env.DB, id);
+  return json(
+    { token, user: { id, email, createdAt: Date.now() } },
+    201,
+  );
+}
+
+async function login(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+
+  const body = await readAuthBody(request);
+  const email = normalizeEmail(body?.email);
+  const password = readPassword(body?.password);
+  if (!email || !password) {
+    return fail(401, 'invalid_credentials', 'Adresse ou mot de passe incorrect.');
+  }
+
+  const key = `login:${clientKey(request)}:${email}`;
+  if ((await attemptsLeft(env.DB, key)) === 0) {
+    return fail(
+      429,
+      'too_many',
+      'Trop de tentatives. Réessaie dans un quart d’heure.',
+    );
+  }
+
+  const user = await env.DB
+    .prepare('SELECT id, email, hash, salt, iterations, created_at FROM users WHERE email = ?')
+    .bind(email)
+    .first();
+
+  // Même délai et même message quand le compte n’existe pas : on ne révèle
+  // pas quelles adresses sont inscrites.
+  const salt = user ? user.salt : randomHex(16);
+  const iterations = user ? user.iterations : PBKDF2_ITERATIONS;
+  const candidate = await hashPassword(password, salt, iterations);
+  if (!user || !sameHash(candidate, user.hash)) {
+    await noteFailure(env.DB, key);
+    return fail(401, 'invalid_credentials', 'Adresse ou mot de passe incorrect.');
+  }
+
+  await clearFailures(env.DB, key);
+  const token = await openSession(env.DB, user.id);
+  return json({ token, user: publicUser(user) });
+}
+
+async function me(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'signed_out', 'Session expirée. Reconnecte-toi.');
+  return json({ user: publicUser(user) });
+}
+
+async function logout(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const header = request.headers.get('authorization') || '';
+  const match = /^Bearer\s+([A-Za-z0-9_-]{20,128})$/.exec(header.trim());
+  if (match) {
+    await env.DB
+      .prepare('DELETE FROM sessions WHERE token = ?')
+      .bind(await sha256(match[1]))
+      .run();
+  }
+  return json({ ok: true });
 }
 
 async function relay(request, env) {
@@ -281,6 +576,26 @@ export default {
 
     if (url.pathname === '/health') {
       return json({ ok: true, configured: Boolean(env.GROQ_API_KEY) });
+    }
+
+    if (url.pathname === '/auth/register') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return register(request, env);
+    }
+
+    if (url.pathname === '/auth/login') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return login(request, env);
+    }
+
+    if (url.pathname === '/auth/me') {
+      if (request.method !== 'GET') return fail(405, 'method', 'Utilise GET.');
+      return me(request, env);
+    }
+
+    if (url.pathname === '/auth/logout') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return logout(request, env);
     }
 
     if (url.pathname !== '/v1/chat') {

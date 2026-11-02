@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'ai/ai_client.dart';
 import 'app_shell.dart';
+import 'auth/auth_client.dart';
 import 'settings_store.dart';
 import 'theme/app_theme.dart';
 import 'update/update_controller.dart';
@@ -19,6 +20,7 @@ class WorldAiApp extends StatefulWidget {
     this.checkUpdatesOnStart = true,
     this.settingsStore,
     this.aiService,
+    this.authService,
   });
 
   /// Injecté par les tests pour rester hors ligne.
@@ -32,6 +34,9 @@ class WorldAiApp extends StatefulWidget {
 
   /// Injecté par les tests ; sinon le relais hébergé répond.
   final AiService? aiService;
+
+  /// Injecté par les tests ; sinon les comptes passent par le relais.
+  final AuthService? authService;
 
   @override
   State<WorldAiApp> createState() => _WorldAiAppState();
@@ -87,6 +92,7 @@ class _WorldAiAppState extends State<WorldAiApp> {
         checkUpdatesOnStart: widget.checkUpdatesOnStart,
         settingsStore: _settings,
         aiService: widget.aiService,
+        authService: widget.authService,
         loadAppIcon: _settings.loadAppIcon,
         onAppIconChanged: (icon) async {
           await _settings.saveAppIcon(icon);

@@ -308,8 +308,9 @@ class _IconDialog extends StatelessWidget {
                             child: _IconChoice(
                               icon: _appIcons[index + 1],
                               selected: _appIcons[index + 1].id == selected,
-                              onTap: () => Navigator.of(context)
-                                  .pop(_appIcons[index + 1].id),
+                              onTap: () =>
+                                  Navigator.of(context)
+                                      .pop(_appIcons[index + 1].id),
                             ),
                           )
                         : const SizedBox.shrink(),
@@ -365,11 +366,7 @@ class _IconChoice extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.asset(
-                      icon.asset,
-                      fit: BoxFit.cover,
-                      cacheWidth: 360,
-                    ),
+                    Image.asset(icon.asset, fit: BoxFit.cover, cacheWidth: 360),
                     if (selected)
                       Align(
                         alignment: Alignment.topRight,

@@ -77,6 +77,7 @@ class AiClient implements AiService {
   AiClient({
     required this.deviceId,
     this.model = defaultAiModel,
+    this.token,
     http.Client? httpClient,
   }) : _http = httpClient ?? http.Client();
 
@@ -94,6 +95,9 @@ class AiClient implements AiService {
   /// IA choisie dans la discussion (voir [aiModels]).
   final String model;
 
+  /// Jeton du compte connecté, pour que le relais sache qui écrit.
+  final String? token;
+
   final http.Client _http;
 
   @override
@@ -108,6 +112,7 @@ class AiClient implements AiService {
               'content-type': 'application/json',
               'accept': 'application/json',
               'x-device-id': device,
+              if (token != null) 'authorization': 'Bearer $token',
             },
             body: jsonEncode({
               'model': model,

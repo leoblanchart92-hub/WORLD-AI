@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'auth/auth_client.dart';
+
 /// Préférences locales, stockées dans un unique fichier JSON du dossier de
 /// support de l'application.
 ///
@@ -17,6 +19,9 @@ class SettingsStore {
   static const String _appIconKey = 'appIcon';
   static const String _deviceIdKey = 'deviceId';
   static const String _aiModelKey = 'aiModel';
+  static const String _tokenKey = 'accountToken';
+  static const String _accountIdKey = 'accountId';
+  static const String _accountEmailKey = 'accountEmail';
 
   Future<File?> _file() async {
     try {
@@ -75,6 +80,45 @@ class SettingsStore {
     return fallback;
   }
 
+  /// Session du compte, relue au démarrage pour éviter un aller-retour réseau.
+  Future<StoredSession?> loadSession() async {
+    final file = await _file();
+    if (file == null) return null;
+    try {
+      if (!await file.exists()) return null;
+      final data = jsonDecode(await file.readAsString());
+      if (data is! Map) return null;
+      final token = data[_tokenKey];
+      final id = data[_accountIdKey];
+      final email = data[_accountEmailKey];
+      if (token is String &&
+          token.isNotEmpty &&
+          id is String &&
+          id.isNotEmpty &&
+          email is String &&
+          email.isNotEmpty) {
+        return StoredSession(token: token, accountId: id, email: email);
+      }
+    } catch (error) {
+      debugPrint('Session illisible : $error');
+    }
+    return null;
+  }
+
+  Future<void> saveSession(StoredSession session) async {
+    await _updateValue(_tokenKey, session.token);
+    await _updateValue(_accountIdKey, session.accountId);
+    await _updateValue(_accountEmailKey, session.email);
+  }
+
+  Future<void> clearSession() async {
+    await _updateValues({
+      _tokenKey: null,
+      _accountIdKey: null,
+      _accountEmailKey: null,
+    });
+  }
+
   /// Identifiant anonyme de l'appareil, créé une seule fois puis conservé.
   /// Il ne sert qu'au comptage d'usage anonyme du relais IA : ni compte, ni donnée
   /// personnelle.
@@ -122,6 +166,11 @@ class SettingsStore {
   }
 
   Future<void> _updateValue(String key, Object value) async {
+    await _updateValues({key: value});
+  }
+
+  /// Écrit plusieurs clés en un seul passage ; `null` efface la clé.
+  Future<void> _updateValues(Map<String, Object?> values) async {
     final file = await _file();
     if (file == null) return;
     try {
@@ -132,7 +181,13 @@ class SettingsStore {
       } else {
         data = <String, dynamic>{};
       }
-      data[key] = value;
+      values.forEach((key, value) {
+        if (value == null) {
+          data.remove(key);
+        } else {
+          data[key] = value;
+        }
+      });
       await file.writeAsString(jsonEncode(data));
     } catch (error) {
       debugPrint('Préférences non enregistrées : $error');

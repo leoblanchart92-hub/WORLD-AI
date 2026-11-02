@@ -85,9 +85,9 @@ class GithubUpdateService {
       Uri.parse('$_apiHost/repos/$owner/$repository/releases/latest');
 
   Map<String, String> get _headers => const {
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
 
   /// Version installée, lue depuis le manifeste Android (`versionName`).
   Future<AppVersion> currentVersion() async {
@@ -104,9 +104,9 @@ class GithubUpdateService {
 
     final http.Response response;
     try {
-      response = await _client.get(_latestReleaseUri, headers: _headers).timeout(
-            _requestTimeout,
-          );
+      response = await _client
+          .get(_latestReleaseUri, headers: _headers)
+          .timeout(_requestTimeout);
     } on TimeoutException {
       throw UpdateException('GitHub ne répond pas, réessaie plus tard.');
     } on SocketException {
@@ -122,7 +122,8 @@ class GithubUpdateService {
 
     final Map<String, dynamic> release;
     try {
-      release = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      release =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
     } on FormatException {
       throw UpdateException('Réponse de GitHub illisible.');
     }
@@ -139,7 +140,9 @@ class GithubUpdateService {
       );
     }
 
-    final downloadUrl = Uri.tryParse(asset['browser_download_url'] as String? ?? '');
+    final downloadUrl = Uri.tryParse(
+      asset['browser_download_url'] as String? ?? '',
+    );
     if (downloadUrl == null) {
       throw UpdateException('Lien de téléchargement invalide.');
     }
@@ -217,9 +220,7 @@ class GithubUpdateService {
 
     if (total > 0 && received != total) {
       await file.delete();
-      throw UpdateException(
-        'Fichier incomplet ($received octets sur $total).',
-      );
+      throw UpdateException('Fichier incomplet ($received octets sur $total).');
     }
 
     return file;

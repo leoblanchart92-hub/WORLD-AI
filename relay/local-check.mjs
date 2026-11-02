@@ -21,11 +21,21 @@ function check(label, condition, detail = '') {
   }
 }
 
-/** D1 simulée : juste ce que le Worker utilise. */
+/** D1 simulée : juste ce que le Worker utilise (usage, comptes, sessions). */
 function fakeDb() {
   const rows = new Map();
+  const users = new Map();
+  const sessions = new Map();
+  const attempts = new Map();
+
   return {
     rows,
+    users,
+    sessions,
+    attempts,
+    async batch(statements) {
+      return Promise.all(statements.map((statement) => statement.run()));
+    },
     prepare(sql) {
       const statement = {
         args: [],
@@ -34,18 +44,51 @@ function fakeDb() {
           return statement;
         },
         async first() {
-          if (sql.includes('SELECT count')) {
+          if (sql.startsWith('SELECT count FROM usage')) {
             const [day, device] = statement.args;
             const count = rows.get(`${day}|${device}`);
             return count === undefined ? null : { count };
           }
+          if (sql.startsWith('SELECT id FROM users WHERE email')) {
+            return users.get(statement.args[0]) ?? null;
+          }
+          if (sql.startsWith('SELECT id, email, hash, salt')) {
+            return users.get(statement.args[0]) ?? null;
+          }
+          if (sql.startsWith('SELECT id, email, created_at FROM users')) {
+            const found = [...users.values()].find((user) => user.id === statement.args[0]);
+            return found ?? null;
+          }
+          if (sql.startsWith('SELECT user_id, expires_at FROM sessions')) {
+            return sessions.get(statement.args[0]) ?? null;
+          }
+          if (sql.startsWith('SELECT count, reset_at FROM auth_attempts')) {
+            return attempts.get(statement.args[0]) ?? null;
+          }
           return null;
         },
         async run() {
-          if (sql.includes('INSERT INTO usage')) {
+          if (sql.startsWith('INSERT INTO usage')) {
             const [day, device] = statement.args;
             const key = `${day}|${device}`;
             rows.set(key, (rows.get(key) ?? 0) + 1);
+          } else if (sql.startsWith('INSERT INTO users')) {
+            const [id, email, hash, salt, iterations, createdAt] = statement.args;
+            users.set(email, { id, email, hash, salt, iterations, created_at: createdAt });
+          } else if (sql.startsWith('INSERT INTO sessions')) {
+            const [token, userId, createdAt, expiresAt] = statement.args;
+            sessions.set(token, { user_id: userId, created_at: createdAt, expires_at: expiresAt });
+          } else if (sql.startsWith('DELETE FROM sessions')) {
+            sessions.delete(statement.args[0]);
+          } else if (sql.startsWith('INSERT INTO auth_attempts')) {
+            const [key, resetAt] = statement.args;
+            const current = attempts.get(key);
+            attempts.set(key, {
+              count: (current?.count ?? 0) + 1,
+              reset_at: resetAt,
+            });
+          } else if (sql.startsWith('DELETE FROM auth_attempts')) {
+            attempts.delete(statement.args[0]);
           }
           return { success: true };
         },
@@ -191,6 +234,128 @@ console.log('Relais WORLD-AI — vérification locale');
   check('gros usage → aucun quota résiduel', body.remaining === null);
   check('gros usage → appel Groq effectué', groqCalls.length === 1);
   check('compteurs toujours incrémentés', db.rows.get(`${day}|${DEVICE}`) === 5001);
+}
+
+function authRequest(path, body, headers = {}) {
+  return new Request(`https://relay.test${path}`, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'cf-connecting-ip': '203.0.113.7',
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+// 8. Comptes : inscription, connexion, session, déconnexion.
+{
+  const db = fakeDb();
+  const env = { DB: db };
+
+  const created = await worker.fetch(
+    authRequest('/auth/register', { email: ' Leo@Exemple.FR ', password: 'motdepasse123' }),
+    env,
+  );
+  const createdBody = await created.json();
+  check('inscription → 201', created.status === 201, `status=${created.status}`);
+  check('adresse normalisée', createdBody.user?.email === 'leo@exemple.fr');
+  check(
+    'jeton de session remis',
+    typeof createdBody.token === 'string' && createdBody.token.length >= 32,
+  );
+  const stored = db.users.get('leo@exemple.fr');
+  check(
+    'mot de passe jamais stocké en clair',
+    Boolean(stored) &&
+      stored.hash !== 'motdepasse123' &&
+      !JSON.stringify(stored).includes('motdepasse123'),
+  );
+
+  const duplicate = await worker.fetch(
+    authRequest('/auth/register', { email: 'leo@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  check('adresse déjà prise → 409', duplicate.status === 409);
+
+  const wrong = await worker.fetch(
+    authRequest('/auth/login', { email: 'leo@exemple.fr', password: 'mauvaispass' }),
+    env,
+  );
+  check('mauvais mot de passe → 401', wrong.status === 401);
+  check('aucun détail sur le compte', (await wrong.json()).error.code === 'invalid_credentials');
+
+  const ok = await worker.fetch(
+    authRequest('/auth/login', { email: 'leo@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  const okBody = await ok.json();
+  check('connexion → 200', ok.status === 200);
+  check('connexion → jeton', typeof okBody.token === 'string');
+
+  const meRes = await worker.fetch(
+    authRequest('/auth/me', undefined, { authorization: `Bearer ${okBody.token}` }),
+    env,
+  );
+  const meBody = await meRes.json();
+  check(
+    'session valide → /auth/me',
+    meRes.status === 200 && meBody.user.email === 'leo@exemple.fr',
+  );
+
+  const anon = await worker.fetch(authRequest('/auth/me'), env);
+  check('sans jeton → 401', anon.status === 401);
+
+  const bad = await worker.fetch(
+    authRequest('/auth/me', undefined, { authorization: 'Bearer nimportequoi' }),
+    env,
+  );
+  check('jeton invalide → 401', bad.status === 401);
+
+  await worker.fetch(
+    authRequest('/auth/logout', {}, { authorization: `Bearer ${okBody.token}` }),
+    env,
+  );
+  const after = await worker.fetch(
+    authRequest('/auth/me', undefined, { authorization: `Bearer ${okBody.token}` }),
+    env,
+  );
+  check('déconnexion → session fermée', after.status === 401);
+
+  const short = await worker.fetch(
+    authRequest('/auth/register', { email: 'b@exemple.fr', password: 'court' }),
+    env,
+  );
+  check('mot de passe trop court → 400', short.status === 400);
+  const badEmail = await worker.fetch(
+    authRequest('/auth/register', { email: 'pas-une-adresse', password: 'motdepasse123' }),
+    env,
+  );
+  check('adresse invalide → 400', badEmail.status === 400);
+
+  const browser = await worker.fetch(
+    authRequest('/auth/login', { email: 'leo@exemple.fr', password: 'motdepasse123' }, { origin: 'https://exemple.test' }),
+    env,
+  );
+  check('navigateur refusé aussi sur /auth', browser.status === 403);
+}
+
+// 8 bis. Force brute : bloquée après huit échecs.
+{
+  const db = fakeDb();
+  const env = { DB: db };
+  await worker.fetch(
+    authRequest('/auth/register', { email: 'brute@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  let last;
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    last = await worker.fetch(
+      authRequest('/auth/login', { email: 'brute@exemple.fr', password: 'fauxmdp12345' }),
+      env,
+    );
+  }
+  check('force brute → 429', last.status === 429, `status=${last.status}`);
 }
 
 // 9. Mauvaise clé Groq : ne fuite rien.

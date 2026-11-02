@@ -119,7 +119,8 @@ class _UpdateSheetState extends State<UpdateSheet> {
       icon: Icons.verified_rounded,
       iconColor: AppTheme.success,
       title: 'Aucune mise à jour',
-      message: 'WORLD-AI ${controller.installedLabel} est la dernière version '
+      message:
+          'WORLD-AI ${controller.installedLabel} est la dernière version '
           'publiée.',
       onClose: _close,
     );
@@ -166,10 +167,7 @@ class _AvailableBody extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     'WORLD-AI ${update.latestVersion}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.muted,
-                    ),
+                    style: const TextStyle(fontSize: 13, color: AppTheme.muted),
                   ),
                 ],
               ),
@@ -238,7 +236,8 @@ class _AvailableBody extends StatelessWidget {
         ],
         const SizedBox(height: 18),
         const _Hint(
-          text: 'Android demandera l\'autorisation d\'installer des '
+          text:
+              'Android demandera l\'autorisation d\'installer des '
               'applications inconnues pour WORLD-AI. Les données de '
               'l\'application sont conservées.',
         ),
@@ -318,7 +317,7 @@ class _DownloadingBody extends StatelessWidget {
             installing
                 ? 'Valide l\'installation dans Android.'
                 : '${formatBytes(controller.receivedBytes)} sur '
-                    '${formatBytes(total)}',
+                      '${formatBytes(total)}',
             style: const TextStyle(fontSize: 13, color: AppTheme.muted),
           ),
         ),
@@ -334,7 +333,8 @@ class _DownloadingBody extends StatelessWidget {
         ),
         const SizedBox(height: 18),
         const _Hint(
-          text: 'Garde l\'application ouverte jusqu\'à l\'ouverture de '
+          text:
+              'Garde l\'application ouverte jusqu\'à l\'ouverture de '
               'l\'installeur Android.',
         ),
       ],
@@ -503,10 +503,7 @@ class _IconTile extends StatelessWidget {
       child: busy
           ? Padding(
               padding: const EdgeInsets.all(14),
-              child: CircularProgressIndicator(
-                strokeWidth: 2.4,
-                color: color,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 2.4, color: color),
             )
           : Icon(icon, color: color, size: _size * 0.46),
     );
@@ -529,9 +526,7 @@ class _VersionBox extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: highlighted
-            ? AppTheme.seed.withAlpha(38)
-            : AppTheme.surfaceHigh,
+        color: highlighted ? AppTheme.seed.withAlpha(38) : AppTheme.surfaceHigh,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: highlighted ? AppTheme.seed.withAlpha(110) : AppTheme.outline,

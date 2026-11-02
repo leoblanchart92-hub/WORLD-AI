@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:world_ai/ai/ai_client.dart';
+import 'package:world_ai/auth/auth_client.dart';
 import 'package:world_ai/main.dart';
 import 'package:world_ai/settings_store.dart';
 import 'package:world_ai/update/app_version.dart';
@@ -42,11 +43,59 @@ class _FakeAi implements AiService {
   }
 }
 
+/// Comptes hors ligne : aucune requête, résultat fixé par le test.
+class _FakeAuth implements AuthService {
+  _FakeAuth({this.session});
+
+  StoredSession? session;
+  int logouts = 0;
+  String? error;
+
+  StoredSession _reply(String email) => StoredSession(
+    token: 'jeton-de-test-0123456789abcdefghijklmnopqrstuvwxyz',
+    accountId: 'compte-1',
+    email: email.trim().toLowerCase(),
+  );
+
+  @override
+  Future<StoredSession> register(String email, String password) async {
+    if (error != null) throw AuthFailure(error!);
+    return session = _reply(email);
+  }
+
+  @override
+  Future<StoredSession> login(String email, String password) async {
+    if (error != null) throw AuthFailure(error!);
+    return session = _reply(email);
+  }
+
+  @override
+  Future<Account?> me(String token) async => null;
+
+  @override
+  Future<void> logout(String token) async {
+    logouts += 1;
+    session = null;
+  }
+}
+
 /// Préférences en mémoire : les tests n'ont pas de stockage sur disque.
 class _MemorySettings extends SettingsStore {
+  _MemorySettings({this.session});
+
   bool checkOnLaunch = true;
   String appIcon = 'default';
   String aiModel = defaultAiModel;
+  StoredSession? session;
+
+  @override
+  Future<StoredSession?> loadSession() async => session;
+
+  @override
+  Future<void> saveSession(StoredSession value) async => session = value;
+
+  @override
+  Future<void> clearSession() async => session = null;
 
   @override
   Future<bool> loadCheckOnLaunch({bool fallback = true}) async => checkOnLaunch;
@@ -107,7 +156,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.2'), findsOneWidget);
+    expect(find.text('Version 2.0.0'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -127,7 +176,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.2'), findsOneWidget);
+    expect(find.text('Version 2.0.0'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (
@@ -194,6 +243,119 @@ void main() {
     expect(find.text('Réponse de test'), findsOneWidget);
     expect(find.text('Commence la discussion'), findsNothing);
     expect(ai.calls.single.last.content, 'Bonjour WORLD-AI');
+  });
+
+  testWidgets('crée un compte depuis le menu et le garde en mémoire', (
+    tester,
+  ) async {
+    final settings = _MemorySettings();
+    final auth = _FakeAuth();
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+        aiService: _FakeAi(),
+        authService: auth,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.text('Créer un compte ou se connecter'), findsOneWidget);
+
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Créer un compte'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('account-email')),
+      ' Lea@Exemple.FR ',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('account-password')),
+      'motdepasse123',
+    );
+    await tester.tap(find.text('Créer mon compte'));
+    await tester.pumpAndSettle();
+
+    expect(settings.session?.email, 'lea@exemple.fr');
+    expect(auth.session?.email, 'lea@exemple.fr');
+    expect(find.text('Mon compte'), findsOneWidget);
+    expect(find.text('lea@exemple.fr'), findsOneWidget);
+  });
+
+  testWidgets('refuse une adresse invalide avant tout appel', (tester) async {
+    final settings = _MemorySettings();
+    final auth = _FakeAuth();
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+        aiService: _FakeAi(),
+        authService: auth,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('account-email')),
+      'pas-une-adresse',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('account-password')),
+      'motdepasse123',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Se connecter'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Écris une adresse e-mail valide.'), findsOneWidget);
+    expect(settings.session, isNull);
+    expect(auth.session, isNull);
+  });
+
+  testWidgets('se déconnecte et oublie la session', (tester) async {
+    final settings = _MemorySettings(
+      session: const StoredSession(
+        token: 'jeton-de-test-0123456789abcdefghijklmnopqrstuvwxyz',
+        accountId: 'compte-1',
+        email: 'lea@exemple.fr',
+      ),
+    );
+    final auth = _FakeAuth(session: settings.session);
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+        aiService: _FakeAi(),
+        authService: auth,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('lea@exemple.fr'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mon compte'), findsOneWidget);
+    await tester.tap(find.text('Se déconnecter'));
+    await tester.pumpAndSettle();
+
+    expect(auth.logouts, 1);
+    expect(settings.session, isNull);
+    expect(find.text('Créer un compte'), findsOneWidget);
+    expect(find.text('Tu es déconnecté.'), findsOneWidget);
   });
 
   testWidgets('choisit une autre IA et la mémorise', (tester) async {

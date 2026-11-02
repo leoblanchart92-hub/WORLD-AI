@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'ai/ai_client.dart';
+import 'auth/auth_client.dart';
+import 'pages/account_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/updates_page.dart';
@@ -20,6 +22,7 @@ class AppShell extends StatefulWidget {
     this.loadAppIcon,
     this.onAppIconChanged,
     this.aiService,
+    this.authService,
   });
 
   final UpdateController controller;
@@ -27,6 +30,9 @@ class AppShell extends StatefulWidget {
 
   /// Injection de l'IA pour les tests ; sinon le relais hébergé est utilisé.
   final AiService? aiService;
+
+  /// Injection des comptes pour les tests ; sinon le relais hébergé répond.
+  final AuthService? authService;
 
   /// Injecté par les tests ; sinon les préférences viennent du disque.
   final SettingsStore? settingsStore;
@@ -50,9 +56,18 @@ class _AppShellState extends State<AppShell> {
   String _aiModel = defaultAiModel;
   AiService? _aiClient;
 
+  late final AuthService _auth = widget.authService ?? AuthClient();
+
+  /// Compte connecté, relu au démarrage depuis les préférences.
+  StoredSession? _session;
+
   AiService get _ai =>
       widget.aiService ??
-      (_aiClient ??= AiClient(deviceId: _settings.deviceId, model: _aiModel));
+      (_aiClient ??= AiClient(
+        deviceId: _settings.deviceId,
+        model: _aiModel,
+        token: _session?.token,
+      ));
 
   int _index = 0;
   bool _checkOnLaunch = true;
@@ -63,6 +78,7 @@ class _AppShellState extends State<AppShell> {
     widget.controller.loadInstalledVersion();
     _checkOnLaunch = widget.checkUpdatesOnStart;
     _loadAiModel();
+    _loadSession();
     if (widget.checkUpdatesOnStart) _loadPreferences();
   }
 
@@ -75,6 +91,40 @@ class _AppShellState extends State<AppShell> {
       _aiModel = model.id;
       _aiClient = null;
     });
+  }
+
+  /// Le compte est relu avant tout envoi ; l'affichage n'attend pas le réseau.
+  Future<void> _loadSession() async {
+    final session = await _settings.loadSession();
+    if (!mounted || session == null) return;
+    setState(() {
+      _session = session;
+      _aiClient = null;
+    });
+  }
+
+  void _onSessionChanged(StoredSession? session) {
+    if (!mounted) return;
+    setState(() {
+      _session = session;
+      _aiClient = null;
+    });
+  }
+
+  Future<void> _openAccount() async {
+    final navigator = Navigator.of(context);
+    await navigator.maybePop();
+    if (!mounted) return;
+    await navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => AccountPage(
+          auth: _auth,
+          settings: _settings,
+          session: _session,
+          onSessionChanged: _onSessionChanged,
+        ),
+      ),
+    );
   }
 
   Future<void> _changeAiModel(String id) async {
@@ -209,9 +259,11 @@ class _AppShellState extends State<AppShell> {
       drawer: _AppDrawer(
         index: _index,
         controller: controller,
+        session: _session,
         onSelected: _selectFromDrawer,
         onUpdate: _updateFromDrawer,
         onSettings: _openSettings,
+        onAccount: _openAccount,
       ),
       body: IndexedStack(
         index: _index,
@@ -230,16 +282,20 @@ class _AppDrawer extends StatelessWidget {
   const _AppDrawer({
     required this.index,
     required this.controller,
+    required this.session,
     required this.onSelected,
     required this.onUpdate,
     required this.onSettings,
+    required this.onAccount,
   });
 
   final int index;
   final UpdateController controller;
+  final StoredSession? session;
   final ValueChanged<int> onSelected;
   final VoidCallback onUpdate;
   final VoidCallback onSettings;
+  final VoidCallback onAccount;
 
   String get _updateSubtitle {
     switch (controller.phase) {
@@ -329,6 +385,10 @@ class _AppDrawer extends StatelessWidget {
                 ),
                 const Divider(indent: 24, endIndent: 24),
                 const SizedBox(height: 10),
+                _AccountTile(session: session, onTap: onAccount),
+                const SizedBox(height: 6),
+                const Divider(indent: 24, endIndent: 24),
+                const SizedBox(height: 10),
                 _NavTile(
                   icon: Icons.forum_outlined,
                   selectedIcon: Icons.forum_rounded,
@@ -369,6 +429,100 @@ class _AppDrawer extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Compte dans le menu : adresse quand on est connecté, invitation sinon.
+class _AccountTile extends StatelessWidget {
+  const _AccountTile({required this.session, required this.onTap});
+
+  final StoredSession? session;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final signedIn = session != null;
+    final initial = signedIn && session!.email.isNotEmpty
+        ? session!.email.substring(0, 1).toUpperCase()
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: Material(
+        color: signedIn ? AppTheme.seed.withAlpha(28) : Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: signedIn ? AppTheme.heroGradient : null,
+                    color: signedIn ? null : AppTheme.surfaceHigh,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: initial != null
+                      ? Text(
+                          initial,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.person_outline_rounded,
+                          size: 18,
+                          color: AppTheme.muted,
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        session?.email ?? 'Se connecter',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: signedIn ? AppTheme.text : AppTheme.textSoft,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        signedIn
+                            ? 'Compte WORLD-AI'
+                            : 'Créer un compte ou se connecter',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: AppTheme.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppTheme.muted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
