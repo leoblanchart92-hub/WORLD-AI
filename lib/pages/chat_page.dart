@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ai/ai_client.dart';
+import '../auth/auth_client.dart';
 import '../theme/app_theme.dart';
 
 /// Écran principal : fil de discussion et barre de saisie en bas.
@@ -13,6 +14,7 @@ class ChatPage extends StatefulWidget {
     required this.ai,
     this.model = defaultAiModel,
     this.onModelChanged,
+    this.session,
   });
 
   final AiService ai;
@@ -22,6 +24,9 @@ class ChatPage extends StatefulWidget {
 
   /// Appelé quand l'utilisateur choisit une autre IA.
   final ValueChanged<String>? onModelChanged;
+
+  /// Compte connecté pour afficher son icône à côté des messages.
+  final StoredSession? session;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -143,7 +148,10 @@ class _ChatPageState extends State<ChatPage> {
                   itemCount: _history.length + (_sending ? 1 : 0),
                   itemBuilder: (context, index) {
                     if (index >= _history.length) return const _Thinking();
-                    return _Bubble(message: _history[index]);
+                    return _Bubble(
+                      message: _history[index],
+                      session: widget.session,
+                    );
                   },
                 ),
         ),
@@ -367,41 +375,85 @@ class _ModelPickerState extends State<_ModelPicker> {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message});
+  const _Bubble({required this.message, this.session});
 
   final AiMessage message;
+  final StoredSession? session;
 
   @override
   Widget build(BuildContext context) {
     final fromUser = message.role == 'user';
+    final signedIn = fromUser && session != null;
+    final initial = signedIn && session!.email.isNotEmpty
+        ? session!.email.substring(0, 1).toUpperCase()
+        : null;
+
+    final bubble = Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.sizeOf(context).width * 0.78 - (signedIn ? 38 : 0),
+      ),
+      decoration: BoxDecoration(
+        gradient: fromUser ? AppTheme.heroGradient : null,
+        color: fromUser ? null : AppTheme.surface,
+        border: fromUser ? null : Border.all(color: AppTheme.outline),
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(18),
+          topRight: const Radius.circular(18),
+          bottomLeft: Radius.circular(fromUser ? 18 : 6),
+          bottomRight: Radius.circular(fromUser ? 6 : 18),
+        ),
+      ),
+      child: Text(
+        message.content,
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.4,
+          color: fromUser ? Colors.white : AppTheme.textSoft,
+        ),
+      ),
+    );
+
+    if (!fromUser) {
+      return Align(alignment: Alignment.centerLeft, child: bubble);
+    }
 
     return Align(
-      alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
-        ),
-        decoration: BoxDecoration(
-          gradient: fromUser ? AppTheme.heroGradient : null,
-          color: fromUser ? null : AppTheme.surface,
-          border: fromUser ? null : Border.all(color: AppTheme.outline),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(18),
-            topRight: const Radius.circular(18),
-            bottomLeft: Radius.circular(fromUser ? 18 : 6),
-            bottomRight: Radius.circular(fromUser ? 6 : 18),
-          ),
-        ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            fontSize: 14,
-            height: 1.4,
-            color: fromUser ? Colors.white : AppTheme.textSoft,
-          ),
-        ),
+      alignment: Alignment.centerRight,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Flexible(child: bubble),
+          if (signedIn)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, top: 2),
+              child: Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: AppTheme.heroGradient,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: initial != null
+                    ? Text(
+                        initial,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.person_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+              ),
+            ),
+        ],
       ),
     );
   }

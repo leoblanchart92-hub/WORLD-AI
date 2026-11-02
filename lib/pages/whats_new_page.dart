@@ -8,6 +8,15 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '2.1.0',
+      title: 'Icône à côté de tes messages',
+      icon: Icons.person_pin_rounded,
+      changes: [
+        'Quand tu es connecté, ton initiale s’affiche à droite de chacun de tes messages.',
+        'Si tu es en mode invité, aucun icône n’apparaît et la discussion reste identique.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '2.0.0',
       title: 'Ton compte WORLD-AI',
       icon: Icons.person_rounded,

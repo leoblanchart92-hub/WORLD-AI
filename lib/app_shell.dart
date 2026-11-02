@@ -268,7 +268,12 @@ class _AppShellState extends State<AppShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          ChatPage(ai: _ai, model: _aiModel, onModelChanged: _changeAiModel),
+          ChatPage(
+            ai: _ai,
+            model: _aiModel,
+            onModelChanged: _changeAiModel,
+            session: _session,
+          ),
           UpdatesPage(controller: controller),
         ],
       ),
