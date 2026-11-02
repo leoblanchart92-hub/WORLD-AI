@@ -36,6 +36,33 @@ class AiReply {
   final int? remaining;
 }
 
+/// Une IA proposée par le relais : identifiant Groq et libellé lisible.
+class AiModel {
+  const AiModel(this.id, this.label, this.description);
+
+  final String id;
+  final String label;
+  final String description;
+}
+
+/// Toutes les IA Groq accessibles au relais qui répondent en français.
+const List<AiModel> aiModels = [
+  AiModel('openai/gpt-oss-120b', 'GPT-OSS 120B', 'Le plus complet'),
+  AiModel('openai/gpt-oss-20b', 'GPT-OSS 20B', 'Très rapide'),
+  AiModel('qwen/qwen3.8-27b', 'Qwen3 27B', 'Multilingue'),
+];
+
+/// Modèle utilisé quand l'utilisateur n'en a pas choisi.
+const String defaultAiModel = 'openai/gpt-oss-120b';
+
+/// Retrouve un modèle par son identifiant, sinon le modèle par défaut.
+AiModel aiModelFor(String? id) {
+  for (final model in aiModels) {
+    if (model.id == id) return model;
+  }
+  return aiModels.first;
+}
+
 /// Contrat minimal de l'IA, pour que les tests restent hors ligne.
 abstract class AiService {
   Future<AiReply> send(List<AiMessage> messages);
@@ -47,21 +74,26 @@ abstract class AiService {
 /// ajoute la clé Groq côté serveur. L'identifiant d'appareil, purement local,
 /// sert uniquement au comptage d'usage anonyme.
 class AiClient implements AiService {
-  AiClient({required this.deviceId, http.Client? httpClient})
-      : _http = httpClient ?? http.Client();
+  AiClient({
+    required this.deviceId,
+    this.model = defaultAiModel,
+    http.Client? httpClient,
+  }) : _http = httpClient ?? http.Client();
 
   /// Adresse du relais, surchargée au besoin avec
   /// `--dart-define=AI_RELAY_URL=https://…`.
   static const String relayUrl = String.fromEnvironment(
     'AI_RELAY_URL',
-    defaultValue:
-        'https://site-39ed8b11e00442268b206ab8cea42e5f.freebuff.page',
+    defaultValue: 'https://site-39ed8b11e00442268b206ab8cea42e5f.freebuff.page',
   );
 
-  static const String model = 'openai/gpt-oss-120b';
   static const Duration timeout = Duration(seconds: 45);
 
   final Future<String> Function() deviceId;
+
+  /// IA choisie dans la discussion (voir [aiModels]).
+  final String model;
+
   final http.Client _http;
 
   @override

@@ -13,7 +13,15 @@
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-const MODELS = new Set(['openai/gpt-oss-120b', 'openai/gpt-oss-20b']);
+// Tous les modèles de discussion Groq joignables avec la clé du projet et
+// qui répondent en français. Whisper (audio), Orpheus (voix) et les garde-fous
+// ne discutent pas ; les Llama 3.x et les modèles « Enterprise » demandent un
+// contrat Groq et sont refusés pour cette clé.
+const MODELS = new Set([
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'qwen/qwen3.8-27b',
+]);
 const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 const MAX_MESSAGES = 24;
@@ -95,7 +103,7 @@ function statusPage(configured) {
       hint +
       '</p>' +
       '<dl><dt>Point d’entrée</dt><dd><code>POST /v1/chat</code></dd>' +
-      '<dt>Modèles</dt><dd>openai/gpt-oss-120b, openai/gpt-oss-20b</dd>' +
+      '<dt>Modèles</dt><dd>openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b</dd>' +
       '<dt>Quota</dt><dd>Aucune limite de messages</dd>' +
       '<dt>État</dt><dd><code>/health</code></dd></dl>' +
       '</main></body></html>',

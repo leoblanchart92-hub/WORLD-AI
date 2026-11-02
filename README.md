@@ -122,6 +122,7 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `1.9.1` | Choix entre les trois IA Groq francophones : GPT-OSS 120B, GPT-OSS 20B et Qwen3 27B. |
 | `1.9.0` | Discussion connectée à l’IA Groq via un relais hébergé : la clé reste côté serveur. |
 | `1.3.0` | Publication de test : valide la mise à jour automatique depuis une 1.2.0 installée. |
 | `1.2.0` | Première version signée avec la clé de release : les mises à jour suivantes s'installent par-dessus sans réinstallation. |
@@ -236,7 +237,9 @@ lisible par n’importe qui, et le dépôt est public.
 `{"configured":true}`.
 
 Garde-fous du relais : appels de navigateur refusés (en-tête `Origin`), modèles
-limités à `openai/gpt-oss-120b` et `openai/gpt-oss-20b`, **aucune limite de
+limités à ceux que la clé peut joindre et qui répondent en français —
+`openai/gpt-oss-120b`, `openai/gpt-oss-20b` et `qwen/qwen3.8-27b` (les Llama 3.x
+et les modèles « Enterprise » exigent un contrat Groq), **aucune limite de
 messages** (`DEVICE_DAILY_LIMIT` et `GLOBAL_DAILY_LIMIT` à `0` ; une valeur > 0
 réactive le plafond), 1 024 jetons maximum par réponse. L’usage reste compté
 anonymement dans D1, sans jamais bloquer une requête.

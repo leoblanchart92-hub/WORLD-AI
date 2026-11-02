@@ -45,8 +45,14 @@ class _AppShellState extends State<AppShell> {
   static const Duration _preferenceTimeout = Duration(milliseconds: 800);
 
   late final SettingsStore _settings = widget.settingsStore ?? SettingsStore();
-  late final AiService _ai = widget.aiService ??
-      AiClient(deviceId: _settings.deviceId);
+
+  /// IA choisie dans la discussion ; « default » tant que rien n'est enregistré.
+  String _aiModel = defaultAiModel;
+  AiService? _aiClient;
+
+  AiService get _ai =>
+      widget.aiService ??
+      (_aiClient ??= AiClient(deviceId: _settings.deviceId, model: _aiModel));
 
   int _index = 0;
   bool _checkOnLaunch = true;
@@ -56,7 +62,29 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     widget.controller.loadInstalledVersion();
     _checkOnLaunch = widget.checkUpdatesOnStart;
+    _loadAiModel();
     if (widget.checkUpdatesOnStart) _loadPreferences();
+  }
+
+  /// L'IA choisie est relue avant le premier message, sans bloquer l'affichage.
+  Future<void> _loadAiModel() async {
+    final stored = await _settings.loadAiModel(fallback: defaultAiModel);
+    final model = aiModelFor(stored);
+    if (!mounted || model.id == _aiModel) return;
+    setState(() {
+      _aiModel = model.id;
+      _aiClient = null;
+    });
+  }
+
+  Future<void> _changeAiModel(String id) async {
+    final model = aiModelFor(id);
+    if (model.id == _aiModel) return;
+    setState(() {
+      _aiModel = model.id;
+      _aiClient = null;
+    });
+    await _settings.saveAiModel(model.id);
   }
 
   /// Les préférences décident si la vérification automatique a lieu ; elles
@@ -104,9 +132,8 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openWhatsNew() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const WhatsNewPage()),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const WhatsNewPage()));
   }
 
   Future<void> _saveAppIcon(String icon) async {
@@ -189,7 +216,7 @@ class _AppShellState extends State<AppShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          ChatPage(ai: _ai),
+          ChatPage(ai: _ai, model: _aiModel, onModelChanged: _changeAiModel),
           UpdatesPage(controller: controller),
         ],
       ),

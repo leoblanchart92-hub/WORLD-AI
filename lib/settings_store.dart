@@ -16,6 +16,7 @@ class SettingsStore {
   static const String _checkOnLaunchKey = 'checkOnLaunch';
   static const String _appIconKey = 'appIcon';
   static const String _deviceIdKey = 'deviceId';
+  static const String _aiModelKey = 'aiModel';
 
   Future<File?> _file() async {
     try {
@@ -36,6 +37,22 @@ class SettingsStore {
       final data = jsonDecode(await file.readAsString());
       if (data is Map && data[_checkOnLaunchKey] is bool) {
         return data[_checkOnLaunchKey] as bool;
+      }
+    } catch (error) {
+      debugPrint('Préférences illisibles : $error');
+    }
+    return fallback;
+  }
+
+  /// IA choisie pour la discussion, conservée d'une session à l'autre.
+  Future<String> loadAiModel({String fallback = 'default'}) async {
+    final file = await _file();
+    if (file == null) return fallback;
+    try {
+      if (!await file.exists()) return fallback;
+      final data = jsonDecode(await file.readAsString());
+      if (data is Map && data[_aiModelKey] is String) {
+        return data[_aiModelKey] as String;
       }
     } catch (error) {
       debugPrint('Préférences illisibles : $error');
@@ -98,6 +115,10 @@ class SettingsStore {
 
   Future<void> saveAppIcon(String value) async {
     await _updateValue(_appIconKey, value);
+  }
+
+  Future<void> saveAiModel(String value) async {
+    await _updateValue(_aiModelKey, value);
   }
 
   Future<void> _updateValue(String key, Object value) async {

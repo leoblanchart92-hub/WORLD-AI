@@ -8,6 +8,16 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.9.1',
+      title: 'Trois IA Groq au choix',
+      icon: Icons.swap_horiz_rounded,
+      changes: [
+        'Toutes les IA Groq qui répondent en français sont maintenant disponibles : GPT-OSS 120B, GPT-OSS 20B et Qwen3 27B.',
+        'Touche la pastille au-dessus du clavier pour changer d’IA ; le choix est mémorisé.',
+        'Chacune est réglée pour répondre en français, quel que soit le modèle choisi.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.9.0',
       title: 'L’IA répond vraiment',
       icon: Icons.auto_awesome_rounded,
@@ -122,11 +132,7 @@ class WhatsNewPage extends StatelessWidget {
         children: [
           const Text(
             'Retrouve ici les principales améliorations de l’application.',
-            style: TextStyle(
-              fontSize: 14,
-              height: 1.5,
-              color: AppTheme.muted,
-            ),
+            style: TextStyle(fontSize: 14, height: 1.5, color: AppTheme.muted),
           ),
           const SizedBox(height: 20),
           for (final release in _releases) ...[

@@ -21,10 +21,10 @@ class _FakeService extends GithubUpdateService {
 
   @override
   Future<UpdateCheckResult> check() async => UpdateCheckResult(
-        status,
-        installed,
-        update: status == UpdateStatus.updateAvailable ? update : null,
-      );
+    status,
+    installed,
+    update: status == UpdateStatus.updateAvailable ? update : null,
+  );
 }
 
 /// IA hors ligne : répond immédiatement, sans relais ni réseau.
@@ -46,6 +46,7 @@ class _FakeAi implements AiService {
 class _MemorySettings extends SettingsStore {
   bool checkOnLaunch = true;
   String appIcon = 'default';
+  String aiModel = defaultAiModel;
 
   @override
   Future<bool> loadCheckOnLaunch({bool fallback = true}) async => checkOnLaunch;
@@ -58,16 +59,22 @@ class _MemorySettings extends SettingsStore {
 
   @override
   Future<void> saveAppIcon(String value) async => appIcon = value;
+
+  @override
+  Future<String> loadAiModel({String fallback = 'default'}) async => aiModel;
+
+  @override
+  Future<void> saveAiModel(String value) async => aiModel = value;
 }
 
 AppUpdate _pendingUpdate() => AppUpdate(
-      currentVersion: _FakeService.installed,
-      latestVersion: const AppVersion(1, 4, 0),
-      releaseNotes: '- Nouvelle interface\n- Tiroir latéral',
-      downloadUrl: Uri.parse('https://example.com/world_ai-1.4.0.apk'),
-      fileName: 'world_ai-1.4.0.apk',
-      sizeInBytes: 47425761,
-    );
+  currentVersion: _FakeService.installed,
+  latestVersion: const AppVersion(1, 4, 0),
+  releaseNotes: '- Nouvelle interface\n- Tiroir latéral',
+  downloadUrl: Uri.parse('https://example.com/world_ai-1.4.0.apk'),
+  fileName: 'world_ai-1.4.0.apk',
+  sizeInBytes: 47425761,
+);
 
 void main() {
   testWidgets('ouvre sur la discussion et sa barre de saisie', (tester) async {
@@ -100,7 +107,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.0'), findsOneWidget);
+    expect(find.text('Version 1.9.1'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -120,7 +127,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.0'), findsOneWidget);
+    expect(find.text('Version 1.9.1'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (
@@ -149,18 +156,12 @@ void main() {
     expect(dialog, findsOneWidget);
     for (var number = 1; number <= 6; number++) {
       expect(
-        find.descendant(
-          of: dialog,
-          matching: find.text('Icône $number'),
-        ),
+        find.descendant(of: dialog, matching: find.text('Icône $number')),
         findsOneWidget,
       );
     }
 
-    final choice = find.descendant(
-      of: dialog,
-      matching: find.text('Icône 6'),
-    );
+    final choice = find.descendant(of: dialog, matching: find.text('Icône 6'));
     await tester.ensureVisible(choice);
     await tester.pumpAndSettle();
     await tester.tap(choice);
@@ -195,6 +196,34 @@ void main() {
     expect(ai.calls.single.last.content, 'Bonjour WORLD-AI');
   });
 
+  testWidgets('choisit une autre IA et la mémorise', (tester) async {
+    final settings = _MemorySettings();
+    await tester.pumpWidget(
+      WorldAiApp(
+        updateService: _FakeService(),
+        checkUpdatesOnStart: false,
+        settingsStore: settings,
+        aiService: _FakeAi(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Groq · GPT-OSS 120B'), findsOneWidget);
+
+    await tester.tap(find.text('Groq · GPT-OSS 120B'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choisir l’IA'), findsOneWidget);
+    expect(find.text('Qwen3 27B'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Qwen3 27B'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Qwen3 27B'));
+    await tester.pumpAndSettle();
+
+    expect(settings.aiModel, 'qwen/qwen3.8-27b');
+    expect(find.text('Groq · Qwen3 27B'), findsOneWidget);
+  });
+
   testWidgets('affiche l’erreur du relais et permet de réessayer', (
     tester,
   ) async {
@@ -220,9 +249,7 @@ void main() {
     expect(find.text('Réessayer'), findsNothing);
   });
 
-  testWidgets('garde mise à jour et paramètres en bas du menu', (
-    tester,
-  ) async {
+  testWidgets('garde mise à jour et paramètres en bas du menu', (tester) async {
     await tester.pumpWidget(
       WorldAiApp(updateService: _FakeService(), checkUpdatesOnStart: false),
     );

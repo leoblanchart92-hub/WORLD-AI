@@ -8,9 +8,20 @@ import '../theme/app_theme.dart';
 /// Les messages partent vers le relais WORLD-AI, qui les transmet à Groq avec
 /// sa propre clé : l'application n'en contient aucune.
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.ai});
+  const ChatPage({
+    super.key,
+    required this.ai,
+    this.model = defaultAiModel,
+    this.onModelChanged,
+  });
 
   final AiService ai;
+
+  /// Identifiant de l'IA choisie (voir [aiModels]).
+  final String model;
+
+  /// Appelé quand l'utilisateur choisit une autre IA.
+  final ValueChanged<String>? onModelChanged;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -96,6 +107,72 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  /// Choix de l'IA : toutes celles proposées répondent en français.
+  Future<void> _pickModel() async {
+    final current = aiModelFor(widget.model);
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+                child: Text(
+                  'Choisir l’IA',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.text,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Text(
+                  'Toutes répondent en français. Le choix est mémorisé.',
+                  style: TextStyle(fontSize: 12, color: AppTheme.muted),
+                ),
+              ),
+              for (final model in aiModels)
+                ListTile(
+                  onTap: () => Navigator.of(context).pop(model.id),
+                  leading: Icon(
+                    model.id == current.id
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    size: 20,
+                    color: model.id == current.id
+                        ? AppTheme.accent
+                        : AppTheme.muted,
+                  ),
+                  title: Text(
+                    model.label,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textSoft,
+                    ),
+                  ),
+                  subtitle: Text(
+                    model.description,
+                    style: const TextStyle(fontSize: 12, color: AppTheme.muted),
+                  ),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (chosen != null) widget.onModelChanged?.call(chosen);
+  }
+
   Future<void> _retry() async {
     if (_sending || _history.isEmpty) return;
     setState(() {
@@ -124,12 +201,13 @@ class _ChatPageState extends State<ChatPage> {
                   },
                 ),
         ),
-        if (_failure != null)
-          _FailureCard(failure: _failure!, onRetry: _retry),
+        if (_failure != null) _FailureCard(failure: _failure!, onRetry: _retry),
         _Composer(
           controller: _input,
           canSend: _canSend,
           onSend: _send,
+          model: aiModelFor(widget.model),
+          onPickModel: widget.onModelChanged == null ? null : _pickModel,
         ),
       ],
     );
@@ -326,11 +404,15 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.canSend,
     required this.onSend,
+    required this.model,
+    required this.onPickModel,
   });
 
   final TextEditingController controller;
   final bool canSend;
   final VoidCallback onSend;
+  final AiModel model;
+  final VoidCallback? onPickModel;
 
   @override
   Widget build(BuildContext context) {
@@ -351,7 +433,7 @@ class _Composer extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const _AiBadge(),
+              _AiBadge(model: model, onTap: onPickModel),
               const SizedBox(height: 10),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -407,12 +489,18 @@ class _Composer extends StatelessWidget {
 }
 
 /// IA active : Groq, par l'intermédiaire du relais WORLD-AI.
+///
+/// La pastille ouvre le choix de l'IA ; sans gestionnaire, elle reste
+/// simplement informative.
 class _AiBadge extends StatelessWidget {
-  const _AiBadge();
+  const _AiBadge({required this.model, this.onTap});
+
+  final AiModel model;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final content = Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -428,28 +516,44 @@ class _AiBadge extends StatelessWidget {
             color: AppTheme.accent,
           ),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Groq · GPT-OSS 120B',
-                  style: TextStyle(
+                  'Groq · ${model.label}',
+                  style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                     color: AppTheme.textSoft,
                   ),
                 ),
-                SizedBox(height: 2),
-                Text(
+                const SizedBox(height: 2),
+                const Text(
                   'Relais WORLD-AI · sans limite de messages',
                   style: TextStyle(fontSize: 11, color: AppTheme.muted),
                 ),
               ],
             ),
           ),
+          if (onTap != null)
+            const Icon(
+              Icons.swap_horiz_rounded,
+              size: 18,
+              color: AppTheme.muted,
+            ),
         ],
+      ),
+    );
+
+    if (onTap == null) return content;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: content,
       ),
     );
   }
