@@ -107,68 +107,14 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  /// Choix de l'IA : toutes celles proposées répondent en français.
+  /// Choix de l'IA : d'abord le fournisseur, puis sa version.
   Future<void> _pickModel() async {
-    final current = aiModelFor(widget.model);
     final chosen = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppTheme.surface,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
-                child: Text(
-                  'Choisir l’IA',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.text,
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
-                child: Text(
-                  'Toutes répondent en français. Le choix est mémorisé.',
-                  style: TextStyle(fontSize: 12, color: AppTheme.muted),
-                ),
-              ),
-              for (final model in aiModels)
-                ListTile(
-                  onTap: () => Navigator.of(context).pop(model.id),
-                  leading: Icon(
-                    model.id == current.id
-                        ? Icons.radio_button_checked_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    size: 20,
-                    color: model.id == current.id
-                        ? AppTheme.accent
-                        : AppTheme.muted,
-                  ),
-                  title: Text(
-                    model.label,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.textSoft,
-                    ),
-                  ),
-                  subtitle: Text(
-                    model.description,
-                    style: const TextStyle(fontSize: 12, color: AppTheme.muted),
-                  ),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
+      isScrollControlled: true,
+      builder: (context) => _ModelPicker(current: aiModelFor(widget.model)),
     );
     if (chosen != null) widget.onModelChanged?.call(chosen);
   }
@@ -262,6 +208,161 @@ class _EmptyChat extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Fenêtre de choix de l'IA : le fournisseur d'abord (un seul bouton, « Groq »),
+/// puis ses versions proposées.
+class _ModelPicker extends StatefulWidget {
+  const _ModelPicker({required this.current});
+
+  final AiModel current;
+
+  @override
+  State<_ModelPicker> createState() => _ModelPickerState();
+}
+
+class _ModelPickerState extends State<_ModelPicker> {
+  bool _showVersions = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _showVersions ? _versions(context) : _providers(context),
+        ),
+      ),
+    );
+  }
+
+  /// Premier écran : le fournisseur. Groq est le seul pour l'instant.
+  List<Widget> _providers(BuildContext context) {
+    return [
+      const Padding(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+        child: Text(
+          'Choisir l’IA',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.text,
+          ),
+        ),
+      ),
+      const Padding(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+        child: Text(
+          'Choisis le fournisseur, puis sa version.',
+          style: TextStyle(fontSize: 12, color: AppTheme.muted),
+        ),
+      ),
+      ListTile(
+        key: const ValueKey('provider-groq'),
+        onTap: () => setState(() => _showVersions = true),
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            gradient: AppTheme.heroGradient,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Icon(
+            Icons.auto_awesome_rounded,
+            size: 18,
+            color: Colors.white,
+          ),
+        ),
+        title: const Text(
+          'Groq',
+          style: TextStyle(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textSoft,
+          ),
+        ),
+        subtitle: Text(
+          '${aiModels.length} versions · réponses en français',
+          style: const TextStyle(fontSize: 12, color: AppTheme.muted),
+        ),
+        trailing: const Icon(
+          Icons.chevron_right_rounded,
+          color: AppTheme.muted,
+        ),
+      ),
+      const SizedBox(height: 8),
+    ];
+  }
+
+  /// Second écran : les versions Groq, avec la version active cochée.
+  List<Widget> _versions(BuildContext context) {
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 20, 4),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: () => setState(() => _showVersions = false),
+              icon: const Icon(Icons.arrow_back_rounded, size: 20),
+              color: AppTheme.textSoft,
+              tooltip: 'Fournisseurs',
+            ),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Groq',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.text,
+                  ),
+                ),
+                Text(
+                  'Choisis la version',
+                  style: TextStyle(fontSize: 12, color: AppTheme.muted),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      for (final model in aiModels)
+        ListTile(
+          onTap: () => Navigator.of(context).pop(model.id),
+          leading: Icon(
+            model.id == widget.current.id
+                ? Icons.radio_button_checked_rounded
+                : Icons.radio_button_unchecked_rounded,
+            size: 20,
+            color: model.id == widget.current.id
+                ? AppTheme.accent
+                : AppTheme.muted,
+          ),
+          title: Text(
+            model.label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textSoft,
+            ),
+          ),
+          subtitle: Text(
+            model.description,
+            style: const TextStyle(fontSize: 12, color: AppTheme.muted),
+          ),
+        ),
+      const Padding(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Text(
+          'Toutes répondent en français. Le choix est mémorisé.',
+          style: TextStyle(fontSize: 11.5, color: AppTheme.muted),
+        ),
+      ),
+    ];
   }
 }
 

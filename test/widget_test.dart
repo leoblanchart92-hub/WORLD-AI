@@ -107,7 +107,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.1'), findsOneWidget);
+    expect(find.text('Version 1.9.2'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -127,7 +127,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 1.9.1'), findsOneWidget);
+    expect(find.text('Version 1.9.2'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (
@@ -213,6 +213,12 @@ void main() {
     await tester.tap(find.text('Groq · GPT-OSS 120B'));
     await tester.pumpAndSettle();
     expect(find.text('Choisir l’IA'), findsOneWidget);
+    // Les versions restent derrière le fournisseur « Groq ».
+    expect(find.text('Qwen3 27B'), findsNothing);
+
+    await tester.tap(find.text('Groq'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choisis la version'), findsOneWidget);
     expect(find.text('Qwen3 27B'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Qwen3 27B'));

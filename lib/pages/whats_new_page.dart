@@ -8,6 +8,15 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '1.9.2',
+      title: 'Choisir l’IA en deux touches',
+      icon: Icons.tune_rounded,
+      changes: [
+        'La pastille d’IA ouvre une fenêtre de sélection : le bouton Groq, puis ses versions.',
+        'Un retour ramène au choix du fournisseur sans quitter la fenêtre.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '1.9.1',
       title: 'Trois IA Groq au choix',
       icon: Icons.swap_horiz_rounded,
