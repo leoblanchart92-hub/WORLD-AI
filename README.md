@@ -122,6 +122,8 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `2.2.0` | Historique des discussions, copier un message, régénérer, modifier et relancer, arrêt de génération, heure discrète, effacer la conversation, synchronisation des discussions sur le relais. |
+| `2.1.0` | Icône à côté des messages utilisateur quand connecté. |
 | `2.0.0` | Comptes WORLD-AI : inscription, connexion, profil et déconnexion depuis le menu. |
 | `1.9.1` | Choix entre les trois IA Groq francophones : GPT-OSS 120B, GPT-OSS 20B et Qwen3 27B. |
 | `1.9.0` | Discussion connectée à l’IA Groq via un relais hébergé : la clé reste côté serveur. |

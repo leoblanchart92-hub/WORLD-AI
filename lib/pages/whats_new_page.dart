@@ -17,6 +17,21 @@ class WhatsNewPage extends StatelessWidget {
       ],
     ),
     _ReleaseNotes(
+      version: '2.2.0',
+      title: 'Historique, copier, régénérer et plus',
+      icon: Icons.history_rounded,
+      changes: [
+        'Depuis le menu, consulte toutes tes discussions dans un historique : nouvelle discussion, renommer, effacer ou supprimer une conversation.',
+        'Appuie longuement sur un message pour copier son texte dans le presse-papiers.',
+        'Appuie longuement sur ton dernier message pour le modifier et relancer la réponse de l’IA.',
+        'Appuie longuement sur la dernière réponse de l’IA pour la régénérer.',
+        'Bouton stop pendant la génération pour l’arrêter à tout moment.',
+        'Heure discrète sous chaque message pour retrouver une réponse dans la discussion.',
+        'Le bouton « Effacer la conversation » nettoie l’affichée courante.',
+        'Quand tu es connecté, les discussions et messages restent synchronisés sur le relais.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '2.0.0',
       title: 'Ton compte WORLD-AI',
       icon: Icons.person_rounded,

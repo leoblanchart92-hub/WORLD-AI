@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'ai/ai_client.dart';
 import 'auth/auth_client.dart';
+import 'chat/chat_models.dart';
+import 'chat/conversation_store.dart';
 import 'pages/account_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/settings_page.dart';
@@ -12,7 +14,6 @@ import 'theme/app_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_ui.dart';
 
-/// Coquille de l'application : barre supérieure, menu latéral et pages.
 class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
@@ -28,13 +29,8 @@ class AppShell extends StatefulWidget {
   final UpdateController controller;
   final bool checkUpdatesOnStart;
 
-  /// Injection de l'IA pour les tests ; sinon le relais hébergé est utilisé.
   final AiService? aiService;
-
-  /// Injection des comptes pour les tests ; sinon le relais hébergé répond.
   final AuthService? authService;
-
-  /// Injecté par les tests ; sinon les préférences viennent du disque.
   final SettingsStore? settingsStore;
   final Future<String> Function()? loadAppIcon;
   final Future<void> Function(String)? onAppIconChanged;
@@ -46,19 +42,15 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   static const List<String> _titles = ['Discussion', 'Mises à jour'];
 
-  /// Au-delà de ce délai, la préférence est considérée comme activée : un
-  /// stockage lent ne doit pas désactiver silencieusement les mises à jour.
   static const Duration _preferenceTimeout = Duration(milliseconds: 800);
 
   late final SettingsStore _settings = widget.settingsStore ?? SettingsStore();
 
-  /// IA choisie dans la discussion ; « default » tant que rien n'est enregistré.
   String _aiModel = defaultAiModel;
   AiService? _aiClient;
 
   late final AuthService _auth = widget.authService ?? AuthClient();
 
-  /// Compte connecté, relu au démarrage depuis les préférences.
   StoredSession? _session;
 
   AiService get _ai =>
@@ -72,6 +64,23 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   bool _checkOnLaunch = true;
 
+  late final ConversationStore _conversationStore = ConversationStore(token: _session?.token);
+  List<Conversation> _conversations = [];
+  String? _activeConversationId;
+
+  Conversation get _activeConversation {
+    if (_conversations.isEmpty) {
+      final c = _createNewConversation();
+      _conversations = [c];
+      _activeConversationId = c.id;
+      return c;
+    }
+    return _conversations.firstWhere(
+      (c) => c.id == _activeConversationId,
+      orElse: () => _conversations.first,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -79,10 +88,10 @@ class _AppShellState extends State<AppShell> {
     _checkOnLaunch = widget.checkUpdatesOnStart;
     _loadAiModel();
     _loadSession();
+    _loadConversations();
     if (widget.checkUpdatesOnStart) _loadPreferences();
   }
 
-  /// L'IA choisie est relue avant le premier message, sans bloquer l'affichage.
   Future<void> _loadAiModel() async {
     final stored = await _settings.loadAiModel(fallback: defaultAiModel);
     final model = aiModelFor(stored);
@@ -93,14 +102,15 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
-  /// Le compte est relu avant tout envoi ; l'affichage n'attend pas le réseau.
   Future<void> _loadSession() async {
     final session = await _settings.loadSession();
-    if (!mounted || session == null) return;
+    if (!mounted) return;
     setState(() {
       _session = session;
       _aiClient = null;
+      _conversationStore.token = session?.token;
     });
+    _loadConversations();
   }
 
   void _onSessionChanged(StoredSession? session) {
@@ -108,7 +118,124 @@ class _AppShellState extends State<AppShell> {
     setState(() {
       _session = session;
       _aiClient = null;
+      _conversationStore.token = session?.token;
     });
+    _loadConversations();
+  }
+
+  Future<void> _loadConversations() async {
+    final local = await _conversationStore.load();
+    if (!mounted) return;
+    if (_session != null) {
+      try {
+        final remote = await _conversationStore.fetchRemote(_ai as AiClient);
+        if (remote.isNotEmpty) {
+          final list = <Conversation>[];
+          for (final r in remote) {
+            list.add(Conversation(
+              id: r['id'] as String,
+              title: r['title'] as String? ?? 'Nouvelle discussion',
+              createdAt: DateTime.fromMillisecondsSinceEpoch(r['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(r['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+              messages: [],
+              remote: true,
+            ));
+          }
+          setState(() {
+            _conversations = list;
+            _activeConversationId ??= list.first.id;
+          });
+          await _conversationStore.save(_conversations);
+          return;
+        }
+      } catch (_) {}
+    }
+    if (local.isNotEmpty) {
+      setState(() {
+        _conversations = local;
+        _activeConversationId ??= local.first.id;
+      });
+    } else {
+      final c = _createNewConversation();
+      setState(() {
+        _conversations = [c];
+        _activeConversationId = c.id;
+      });
+      await _conversationStore.save(_conversations);
+    }
+  }
+
+  Conversation _createNewConversation() {
+    final now = DateTime.now();
+    return Conversation(
+      id: '${now.microsecondsSinceEpoch}-${now.hashCode.abs()}',
+      title: 'Nouvelle discussion',
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      remote: _session != null,
+    );
+  }
+
+  Future<void> _newConversation() async {
+    var c = _createNewConversation();
+    if (_session != null) {
+      try {
+        final res = await _conversationStore.createRemote(_ai as AiClient, c.title);
+        if (res != null && res['id'] != null) {
+          c = Conversation(
+            id: res['id'] as String,
+            title: res['title'] as String? ?? c.title,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(res['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+            updatedAt: DateTime.fromMillisecondsSinceEpoch(res['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+            messages: [],
+            remote: true,
+          );
+        }
+      } catch (_) {}
+    }
+    setState(() {
+      _conversations.insert(0, c);
+      _activeConversationId = c.id;
+      _index = 0;
+    });
+    await _conversationStore.save(_conversations);
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _clearConversation() async {
+    final conv = _activeConversation;
+    setState(() {
+      conv.messages.clear();
+      conv.updatedAt = DateTime.now();
+    });
+    await _conversationStore.save(_conversations);
+  }
+
+  Future<void> _deleteConversation(String id) async {
+    if (_session != null) {
+      try {
+        await _conversationStore.deleteRemote(_ai as AiClient, id);
+      } catch (_) {}
+    }
+    setState(() {
+      _conversations.removeWhere((c) => c.id == id);
+      if (_conversations.isEmpty) {
+        final c = _createNewConversation();
+        _conversations = [c];
+        _activeConversationId = c.id;
+      } else if (_activeConversationId == id) {
+        _activeConversationId = _conversations.first.id;
+      }
+    });
+    await _conversationStore.save(_conversations);
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  void _selectConversation(String id) {
+    setState(() => _activeConversationId = id);
+    if (mounted) Navigator.of(context).maybePop();
+    if (_index != 0) _select(0);
   }
 
   Future<void> _openAccount() async {
@@ -137,8 +264,6 @@ class _AppShellState extends State<AppShell> {
     await _settings.saveAiModel(model.id);
   }
 
-  /// Les préférences décident si la vérification automatique a lieu ; elles
-  /// sont lues avant la première requête réseau.
   Future<void> _loadPreferences() async {
     final stored = await _settings
         .loadCheckOnLaunch(fallback: true)
@@ -152,8 +277,6 @@ class _AppShellState extends State<AppShell> {
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  /// Vérification silencieuse : elle n'ouvre la feuille que s'il y a
-  /// réellement quelque chose à installer.
   Future<void> _startupCheck() async {
     await widget.controller.check(silent: true);
     if (!mounted) return;
@@ -169,8 +292,6 @@ class _AppShellState extends State<AppShell> {
     _select(index);
   }
 
-  /// Bouton « Mise à jour » du bas du menu : installe si une version attend,
-  /// sinon ouvre le centre de mises à jour et lance la vérification.
   Future<void> _updateFromDrawer() async {
     Navigator.of(context).maybePop();
     if (widget.controller.phase == UpdatePhase.available) {
@@ -260,19 +381,35 @@ class _AppShellState extends State<AppShell> {
         index: _index,
         controller: controller,
         session: _session,
+        conversations: _conversations,
+        activeId: _activeConversationId,
         onSelected: _selectFromDrawer,
         onUpdate: _updateFromDrawer,
         onSettings: _openSettings,
         onAccount: _openAccount,
+        onNewConversation: _newConversation,
+        onSelectConversation: _selectConversation,
+        onDeleteConversation: _deleteConversation,
       ),
       body: IndexedStack(
         index: _index,
         children: [
           ChatPage(
             ai: _ai,
+            conversation: _activeConversation,
+            onConversationChanged: (c) {
+              setState(() {});
+              _conversationStore.save(_conversations);
+              if (_session != null) {
+                _conversationStore.syncMessages(_ai as AiClient, c.id, c.messages);
+              }
+            },
+            onNewConversation: _newConversation,
+            onClearConversation: _clearConversation,
+            onDeleteConversation: _deleteConversation,
+            session: _session,
             model: _aiModel,
             onModelChanged: _changeAiModel,
-            session: _session,
           ),
           UpdatesPage(controller: controller),
         ],
@@ -281,26 +418,34 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-/// Menu latéral : identité de l'app, navigation, puis mise à jour et
-/// paramètres ancrés en bas.
 class _AppDrawer extends StatelessWidget {
   const _AppDrawer({
     required this.index,
     required this.controller,
     required this.session,
+    required this.conversations,
+    required this.activeId,
     required this.onSelected,
     required this.onUpdate,
     required this.onSettings,
     required this.onAccount,
+    required this.onNewConversation,
+    required this.onSelectConversation,
+    required this.onDeleteConversation,
   });
 
   final int index;
   final UpdateController controller;
   final StoredSession? session;
+  final List<Conversation> conversations;
+  final String? activeId;
   final ValueChanged<int> onSelected;
   final VoidCallback onUpdate;
   final VoidCallback onSettings;
   final VoidCallback onAccount;
+  final VoidCallback onNewConversation;
+  final ValueChanged<String> onSelectConversation;
+  final ValueChanged<String> onDeleteConversation;
 
   String get _updateSubtitle {
     switch (controller.phase) {
@@ -392,18 +537,56 @@ class _AppDrawer extends StatelessWidget {
                 const SizedBox(height: 10),
                 _AccountTile(session: session, onTap: onAccount),
                 const SizedBox(height: 6),
-                const Divider(indent: 24, endIndent: 24),
-                const SizedBox(height: 10),
-                _NavTile(
-                  icon: Icons.forum_outlined,
-                  selectedIcon: Icons.forum_rounded,
-                  label: 'Discussion',
-                  selected: index == 0,
-                  onTap: () => onSelected(0),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ListTile(
+                    leading: const Icon(Icons.add_rounded, color: AppTheme.accent),
+                    title: const Text('Nouvelle discussion',
+                        style: TextStyle(color: AppTheme.textSoft, fontWeight: FontWeight.w600)),
+                    onTap: onNewConversation,
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(height: 6),
                 const Divider(indent: 24, endIndent: 24),
-                const SizedBox(height: 10),
+                const SizedBox(height: 6),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 24),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Historique',
+                        style: TextStyle(fontSize: 12, color: AppTheme.muted, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: conversations.length,
+                    itemBuilder: (context, index) {
+                      final c = conversations[index];
+                      final active = c.id == activeId;
+                      return ListTile(
+                        dense: true,
+                        selected: active,
+                        selectedTileColor: AppTheme.seed.withAlpha(36),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        leading: Icon(Icons.chat_bubble_outline_rounded,
+                            color: active ? AppTheme.accent : AppTheme.muted, size: 18),
+                        title: Text(c.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: active ? AppTheme.text : AppTheme.textSoft, fontSize: 13)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.muted),
+                          onPressed: () => onDeleteConversation(c.id),
+                        ),
+                        onTap: () => onSelectConversation(c.id),
+                      );
+                    },
+                  ),
+                ),
+                const Divider(indent: 24, endIndent: 24),
                 _FooterTile(
                   icon: Icons.download_rounded,
                   label: 'Mise à jour',
@@ -438,7 +621,6 @@ class _AppDrawer extends StatelessWidget {
   }
 }
 
-/// Compte dans le menu : adresse quand on est connecté, invitation sinon.
 class _AccountTile extends StatelessWidget {
   const _AccountTile({required this.session, required this.onTap});
 
@@ -532,54 +714,6 @@ class _AccountTile extends StatelessWidget {
   }
 }
 
-class _NavTile extends StatelessWidget {
-  const _NavTile({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: Material(
-        color: selected ? AppTheme.seed.withAlpha(48) : Colors.transparent,
-        borderRadius: BorderRadius.circular(30),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(30),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            child: Row(
-              children: [
-                Icon(selected ? selectedIcon : icon, color: AppTheme.textSoft),
-                const SizedBox(width: 14),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? AppTheme.text : AppTheme.textSoft,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _FooterTile extends StatelessWidget {
   const _FooterTile({
     required this.icon,
@@ -612,9 +746,7 @@ class _FooterTile extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: highlighted
-                    ? AppTheme.accent.withAlpha(80)
-                    : Colors.transparent,
+                color: highlighted ? AppTheme.accent.withAlpha(80) : Colors.transparent,
               ),
             ),
             child: Row(

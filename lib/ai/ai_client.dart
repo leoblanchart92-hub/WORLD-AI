@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// Un message de la discussion, tel qu'envoyé au relais.
 class AiMessage {
   const AiMessage(this.role, this.content);
 
@@ -16,7 +15,6 @@ class AiMessage {
   Map<String, String> toJson() => {'role': role, 'content': content};
 }
 
-/// Échec d'un appel à l'IA, avec un message déjà lisible par l'utilisateur.
 class AiFailure implements Exception {
   const AiFailure(this.message, {this.canRetry = true});
 
@@ -31,12 +29,9 @@ class AiReply {
   const AiReply({required this.text, this.remaining});
 
   final String text;
-
-  /// Messages encore disponibles, si le relais en impose un jour.
   final int? remaining;
 }
 
-/// Une IA proposée par le relais : identifiant Groq et libellé lisible.
 class AiModel {
   const AiModel(this.id, this.label, this.description);
 
@@ -45,17 +40,14 @@ class AiModel {
   final String description;
 }
 
-/// Toutes les IA Groq accessibles au relais qui répondent en français.
 const List<AiModel> aiModels = [
   AiModel('openai/gpt-oss-120b', 'GPT-OSS 120B', 'Le plus complet'),
   AiModel('openai/gpt-oss-20b', 'GPT-OSS 20B', 'Très rapide'),
   AiModel('qwen/qwen3.8-27b', 'Qwen3 27B', 'Multilingue'),
 ];
 
-/// Modèle utilisé quand l'utilisateur n'en a pas choisi.
 const String defaultAiModel = 'openai/gpt-oss-120b';
 
-/// Retrouve un modèle par son identifiant, sinon le modèle par défaut.
 AiModel aiModelFor(String? id) {
   for (final model in aiModels) {
     if (model.id == id) return model;
@@ -63,26 +55,18 @@ AiModel aiModelFor(String? id) {
   return aiModels.first;
 }
 
-/// Contrat minimal de l'IA, pour que les tests restent hors ligne.
 abstract class AiService {
-  Future<AiReply> send(List<AiMessage> messages);
+  Future<AiReply> send(List<AiMessage> messages, {http.Client? client});
 }
 
-/// Client du relais WORLD-AI.
-///
-/// L'application ne détient aucune clé : elle appelle un relais hébergé qui
-/// ajoute la clé Groq côté serveur. L'identifiant d'appareil, purement local,
-/// sert uniquement au comptage d'usage anonyme.
 class AiClient implements AiService {
   AiClient({
     required this.deviceId,
     this.model = defaultAiModel,
     this.token,
     http.Client? httpClient,
-  }) : _http = httpClient ?? http.Client();
+  }) : _httpClient = httpClient ?? http.Client();
 
-  /// Adresse du relais, surchargée au besoin avec
-  /// `--dart-define=AI_RELAY_URL=https://…`.
   static const String relayUrl = String.fromEnvironment(
     'AI_RELAY_URL',
     defaultValue: 'https://site-39ed8b11e00442268b206ab8cea42e5f.freebuff.page',
@@ -91,21 +75,19 @@ class AiClient implements AiService {
   static const Duration timeout = Duration(seconds: 45);
 
   final Future<String> Function() deviceId;
-
-  /// IA choisie dans la discussion (voir [aiModels]).
   final String model;
-
-  /// Jeton du compte connecté, pour que le relais sache qui écrit.
   final String? token;
+  final http.Client _httpClient;
 
-  final http.Client _http;
+  http.Client get client => _httpClient;
 
   @override
-  Future<AiReply> send(List<AiMessage> messages) async {
+  Future<AiReply> send(List<AiMessage> messages, {http.Client? client}) async {
     final device = await deviceId();
+    final httpClientToUse = client ?? _httpClient;
     final http.Response response;
     try {
-      response = await _http
+      response = await httpClientToUse
           .post(
             Uri.parse('$relayUrl/v1/chat'),
             headers: {
@@ -122,6 +104,10 @@ class AiClient implements AiService {
           .timeout(timeout);
     } on TimeoutException {
       throw const AiFailure('L’IA met trop de temps à répondre. Réessaie.');
+    } on http.ClientException {
+      throw const AiFailure(
+        'Connexion impossible. Vérifie ta connexion internet.',
+      );
     } catch (_) {
       throw const AiFailure(
         'Connexion impossible. Vérifie ta connexion internet.',

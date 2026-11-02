@@ -48,6 +48,9 @@ const MAX_EMAIL_CHARS = 190;
 const MIN_PASSWORD_CHARS = 8;
 const MAX_PASSWORD_CHARS = 200;
 
+const MAX_CONVERSATIONS = 200;
+const MAX_CONVERSATION_MESSAGES = 200;
+
 let schemaReady = false;
 
 async function ensureSchema(db) {
@@ -81,6 +84,32 @@ async function ensureSchema(db) {
         'key TEXT PRIMARY KEY, ' +
         'count INTEGER NOT NULL DEFAULT 0, ' +
         'reset_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS conversations (' +
+        'id TEXT PRIMARY KEY, ' +
+        'user_id TEXT NOT NULL, ' +
+        'title TEXT NOT NULL DEFAULT "", ' +
+        'created_at INTEGER NOT NULL, ' +
+        'updated_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(user_id, updated_at DESC)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS messages (' +
+        'id TEXT PRIMARY KEY, ' +
+        'conversation_id TEXT NOT NULL, ' +
+        'user_id TEXT NOT NULL, ' +
+        'role TEXT NOT NULL, ' +
+        'content TEXT NOT NULL, ' +
+        'created_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at ASC)',
+    ),
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at ASC)',
     ),
   ]);
   schemaReady = true;
@@ -340,6 +369,53 @@ async function currentUser(request, db) {
   return user || null;
 }
 
+function uid() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
+function trimTitle(text) {
+  const s = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return 'Nouvelle discussion';
+  return s.length > 40 ? s.slice(0, 40) + '…' : s;
+}
+
+async function ensureOwnConversation(db, userId, conversationId) {
+  const row = await db
+    .prepare('SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE id = ?1')
+    .bind(conversationId)
+    .first();
+  if (!row || row.user_id !== userId) return null;
+  return row;
+}
+
+async function listConversations(db, userId) {
+  const { results } = await db
+    .prepare(
+      'SELECT id, title, created_at, updated_at FROM conversations WHERE user_id = ?1 ORDER BY updated_at DESC LIMIT ?2',
+    )
+    .bind(userId, MAX_CONVERSATIONS)
+    .all();
+  return results || [];
+}
+
+async function getConversationMessages(db, conversationId) {
+  const { results } = await db
+    .prepare(
+      'SELECT id, role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC LIMIT ?2',
+    )
+    .bind(conversationId, MAX_CONVERSATION_MESSAGES)
+    .all();
+  return results || [];
+}
+
 async function readAuthBody(request) {
   return request.json().catch(() => null);
 }
@@ -562,6 +638,121 @@ async function relay(request, env) {
   return json({ reply: text.trim(), model, remaining });
 }
 
+async function listConversationsRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const items = await listConversations(env.DB, user.id);
+  return json({ conversations: items });
+}
+
+async function createConversationRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const body = await request.json().catch(() => ({}));
+  const title = trimTitle(body?.title);
+  const now = Date.now();
+  const id = uid();
+  await env.DB
+    .prepare(
+      'INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    )
+    .bind(id, user.id, title, now, now)
+    .run();
+  return json({ conversation: { id, title, created_at: now, updated_at: now } }, 201);
+}
+
+async function getConversationRoute(request, env, conversationId) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const conv = await ensureOwnConversation(env.DB, user.id, conversationId);
+  if (!conv) return fail(404, 'not_found', 'Discussion introuvable.');
+  const messages = await getConversationMessages(env.DB, conversationId);
+  return json({ conversation: conv, messages });
+}
+
+async function updateConversationRoute(request, env, conversationId) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const conv = await ensureOwnConversation(env.DB, user.id, conversationId);
+  if (!conv) return fail(404, 'not_found', 'Discussion introuvable.');
+  const body = await request.json().catch(() => ({}));
+  const title = trimTitle(body?.title);
+  const now = Date.now();
+  await env.DB
+    .prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?')
+    .bind(title, now, conversationId)
+    .run();
+  return json({ conversation: { ...conv, title, updated_at: now } });
+}
+
+async function deleteConversationRoute(request, env, conversationId) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const conv = await ensureOwnConversation(env.DB, user.id, conversationId);
+  if (!conv) return fail(404, 'not_found', 'Discussion introuvable.');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM messages WHERE conversation_id = ?').bind(conversationId),
+    env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(conversationId),
+  ]);
+  return json({ ok: true });
+}
+
+async function getMessagesRoute(request, env, conversationId) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const conv = await ensureOwnConversation(env.DB, user.id, conversationId);
+  if (!conv) return fail(404, 'not_found', 'Discussion introuvable.');
+  const messages = await getConversationMessages(env.DB, conversationId);
+  return json({ messages });
+}
+
+async function appendMessagesRoute(request, env, conversationId) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  await ensureSchema(env.DB);
+  const user = await currentUser(request, env.DB);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const conv = await ensureOwnConversation(env.DB, user.id, conversationId);
+  if (!conv) return fail(404, 'not_found', 'Discussion introuvable.');
+  const body = await request.json().catch(() => ({}));
+  const items = Array.isArray(body?.messages) ? body.messages : [];
+  if (items.length === 0) return json({ ok: true });
+  const now = Date.now();
+  const stmts = [];
+  for (const item of items) {
+    const role = item?.role === 'assistant' ? 'assistant' : 'user';
+    const content = String(item?.content || '').trim();
+    if (!content) continue;
+    if (content.length > MAX_CONTENT_CHARS) continue;
+    stmts.push(
+      env.DB
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .bind(uid(), conversationId, user.id, role, content, item?.created_at || now),
+    );
+  }
+  if (stmts.length === 0) return json({ ok: true });
+  stmts.push(
+    env.DB
+      .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+      .bind(now, conversationId),
+  );
+  await env.DB.batch(stmts);
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -596,6 +787,29 @@ export default {
     if (url.pathname === '/auth/logout') {
       if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
       return logout(request, env);
+    }
+
+    if (url.pathname === '/conversations') {
+      if (request.method === 'GET') return listConversationsRoute(request, env);
+      if (request.method === 'POST') return createConversationRoute(request, env);
+      return fail(405, 'method', 'Utilise GET ou POST.');
+    }
+
+    if (url.pathname.startsWith('/conversations/')) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts.length === 2) {
+        if (request.method === 'GET') return getConversationRoute(request, env, parts[1]);
+        if (request.method === 'DELETE') return deleteConversationRoute(request, env, parts[1]);
+        if (request.method === 'PATCH' || request.method === 'PUT')
+          return updateConversationRoute(request, env, parts[1]);
+        return fail(405, 'method', 'Utilise GET, PATCH ou DELETE.');
+      }
+      if (parts.length === 3 && parts[2] === 'messages') {
+        if (request.method === 'GET') return getMessagesRoute(request, env, parts[1]);
+        if (request.method === 'POST') return appendMessagesRoute(request, env, parts[1]);
+        return fail(405, 'method', 'Utilise GET ou POST.');
+      }
+      return fail(404, 'not_found', 'Route inconnue.');
     }
 
     if (url.pathname !== '/v1/chat') {
