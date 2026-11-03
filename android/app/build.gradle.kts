@@ -18,7 +18,9 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.worldai.world_ai"
-    compileSdk = flutter.compileSdkVersion
+    // 36 explicitement : les plugins de pièces jointes (file_picker) et de
+    // lancement d'URL dépendent d'une bibliothèque Android compilée en API 36.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
