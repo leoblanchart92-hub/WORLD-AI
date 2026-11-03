@@ -28,8 +28,13 @@ subprojects {
         // Propriété compileSdk dans les AGP récents, méthode compileSdkVersion
         // avant ; l'appel reste réflexif pour ne pas dépendre du type exact.
         val android = extensions.findByName("android")
+        // Deux surcharges coexistent : compileSdkVersion(int) et
+        // compileSdkVersion(String) ; on ne retient que celle qui prend un entier.
         val setter = android?.javaClass?.methods?.firstOrNull {
-            (it.name == "setCompileSdk" || it.name == "compileSdkVersion") && it.parameterCount == 1
+            (it.name == "setCompileSdk" || it.name == "compileSdkVersion") &&
+                it.parameterCount == 1 &&
+                (it.parameterTypes[0] == Int::class.javaPrimitiveType ||
+                    it.parameterTypes[0] == Int::class.javaObjectType)
         }
         setter?.invoke(android, 36)
         setter != null
