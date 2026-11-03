@@ -4,8 +4,10 @@ import 'ai/ai_client.dart';
 import 'auth/auth_client.dart';
 import 'chat/chat_models.dart';
 import 'chat/conversation_store.dart';
+import 'github/github_client.dart';
 import 'pages/account_page.dart';
 import 'pages/chat_page.dart';
+import 'pages/github_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/updates_page.dart';
 import 'pages/whats_new_page.dart';
@@ -24,6 +26,7 @@ class AppShell extends StatefulWidget {
     this.onAppIconChanged,
     this.aiService,
     this.authService,
+    this.githubService,
   });
 
   final UpdateController controller;
@@ -31,6 +34,7 @@ class AppShell extends StatefulWidget {
 
   final AiService? aiService;
   final AuthService? authService;
+  final GithubService? githubService;
   final SettingsStore? settingsStore;
   final Future<String> Function()? loadAppIcon;
   final Future<void> Function(String)? onAppIconChanged;
@@ -50,6 +54,7 @@ class _AppShellState extends State<AppShell> {
   AiService? _aiClient;
 
   late final AuthService _auth = widget.authService ?? AuthClient();
+  late final GithubService _github = widget.githubService ?? GithubClient();
 
   StoredSession? _session;
 
@@ -254,6 +259,21 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  Future<void> _openGithub() async {
+    final navigator = Navigator.of(context);
+    await navigator.maybePop();
+    if (!mounted) return;
+    await navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => GithubPage(
+          github: _github,
+          session: _session,
+          onOpenAccount: _openAccount,
+        ),
+      ),
+    );
+  }
+
   Future<void> _changeAiModel(String id) async {
     final model = aiModelFor(id);
     if (model.id == _aiModel) return;
@@ -387,6 +407,7 @@ class _AppShellState extends State<AppShell> {
         onUpdate: _updateFromDrawer,
         onSettings: _openSettings,
         onAccount: _openAccount,
+        onGithub: _openGithub,
         onNewConversation: _newConversation,
         onSelectConversation: _selectConversation,
         onDeleteConversation: _deleteConversation,
@@ -429,6 +450,7 @@ class _AppDrawer extends StatelessWidget {
     required this.onUpdate,
     required this.onSettings,
     required this.onAccount,
+    required this.onGithub,
     required this.onNewConversation,
     required this.onSelectConversation,
     required this.onDeleteConversation,
@@ -443,6 +465,7 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onUpdate;
   final VoidCallback onSettings;
   final VoidCallback onAccount;
+  final VoidCallback onGithub;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onSelectConversation;
   final ValueChanged<String> onDeleteConversation;
@@ -593,6 +616,12 @@ class _AppDrawer extends StatelessWidget {
                   subtitle: _updateSubtitle,
                   highlighted: controller.phase == UpdatePhase.available,
                   onTap: onUpdate,
+                ),
+                _FooterTile(
+                  icon: Icons.hub_outlined,
+                  label: 'GitHub',
+                  subtitle: 'Connecter ton compte et tes dépôts',
+                  onTap: onGithub,
                 ),
                 _FooterTile(
                   icon: Icons.settings_outlined,

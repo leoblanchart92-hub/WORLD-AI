@@ -232,6 +232,8 @@ lisible par n’importe qui, et le dépôt est public.
 | `relay/deploy.json` | Manifeste utilisé pour l’hébergement. |
 | `relay/local-check.mjs` | Vérifications hors ligne du relais (`node relay/local-check.mjs`). |
 | `lib/ai/ai_client.dart` | Client de l’application, sans aucune clé. |
+| `lib/github/github_client.dart` | Connexion GitHub par compte (`/github*`). |
+| `lib/pages/github_page.dart` | Écran *GitHub* : connexion, dépôt courant, déconnexion. |
 
 **Poser la clé** : tableau de bord d’hébergement → projet *WORLD-AI relay* →
 *Secrets* → nom `GROQ_API_KEY`, valeur créée sur
@@ -251,30 +253,46 @@ Pour viser un autre relais : `--dart-define=AI_RELAY_URL=https://…`.
 
 ## Les actions GitHub de l’IA
 
-Quand le relais détient un jeton GitHub, l’IA peut **agir** sur le dépôt au lieu
-de seulement en parler : lire le code, ouvrir et commenter des issues, créer une
-branche, écrire des fichiers (un commit), ouvrir et fusionner une pull request,
-déclencher un workflow Actions. L’application affiche chaque action sous la
-réponse, avec une coche ou une croix.
+Chaque personne **connecte son propre compte GitHub** depuis l’application
+(menu latéral → *GitHub*). L’IA agit alors avec ses droits, sur ses dépôts :
+lire le code, ouvrir et commenter des issues, créer une branche, écrire des
+fichiers (un commit), ouvrir et fusionner une pull request, déclencher un
+workflow Actions. Chaque action est affichée sous la réponse, avec une coche ou
+une croix.
 
-| Secret / variable | Rôle |
+| Élément | Rôle |
 | --- | --- |
-| `GITHUB_TOKEN` | Jeton GitHub (fine-grained) : lecture du contenu, issues, pull requests, Actions. Sans lui, les outils GitHub sont désactivés et l’IA le dit. |
-| `GITHUB_REPO` | Dépôt ciblé, par défaut `leoblanchart92-hub/WORLD-AI`. Un seul dépôt à la fois. |
+| `GITHUB_CLIENT_ID` | Identifiant de l’application OAuth du relais. |
+| `GITHUB_CLIENT_SECRET` | Secret de cette application OAuth. |
+| `GITHUB_TOKEN` | Facultatif : jeton utilisé pour les invités (sans compte). |
+| `GITHUB_REPO` | Facultatif : dépôt courant par défaut. |
 
-**Poser le jeton** : tableau de bord d’hébergement → projet *WORLD-AI relay* →
-*Secrets* → nom `GITHUB_TOKEN`. Utiliser un jeton *fine-grained* limité au dépôt
-concerné, avec les droits **Contents: Read and write**, **Issues: Read and
-write**, **Pull requests: Read and write** et **Actions: Read and write**. Le
-jeton reste côté Worker : il n’est jamais renvoyé à l’application, ni écrit dans
-le dépôt. `/health` renvoie alors `{"github":true}`.
+### Installer la connexion GitHub (une fois)
+
+1. GitHub → *Settings* → *Developer settings* → **OAuth Apps** →
+   **New OAuth App**. Nom `WORLD-AI`, *Homepage URL* = l’adresse du relais,
+   *Authorization callback URL* = la même adresse (le device flow ne s’en sert
+   pas, mais GitHub l’exige).
+2. Sur la page de l’application, cocher **Enable Device Flow**.
+3. Copier le **Client ID**, générer un **Client Secret**.
+4. Tableau de bord d’hébergement → projet *WORLD-AI relay* → *Secrets* :
+   `GITHUB_CLIENT_ID` et `GITHUB_CLIENT_SECRET`. Puis redéployer.
+
+Chaque personne ouvre ensuite *GitHub* dans l’application, touche
+**Connecter avec GitHub**, recopie le code affiché sur
+[github.com/login/device](https://github.com/login/device) et valide. Aucun
+jeton ne transite par l’application : le relais garde le jeton du compte dans sa
+base D1 et ne renvoie que le nom du compte et l’état des actions. Un jeton
+d’accès personnel peut aussi être collé dans cet écran si l’OAuth n’est pas
+installée.
 
 Comportement : au plus six étapes d’outils par message (lecture puis écriture),
-puis l’IA résume ce qu’elle a fait. Chaque action est renvoyée dans `actions` et
-n’est jamais inventée : un échec remonte avec l’erreur réelle de GitHub.
+puis l’IA résume ce qu’elle a fait. Le dépôt courant se choisit dans l’écran
+GitHub ; l’IA peut aussi le préciser elle-même (« repo ») et lister les dépôts
+du compte. Un échec remonte avec l’erreur réelle de GitHub, jamais inventée.
 
-Pour retirer cet accès, supprimer `GITHUB_TOKEN` : le relais redevient un simple
-relais de discussion.
+Pour retirer l’accès d’une personne : *Déconnecter GitHub* dans l’application
+(le jeton est supprimé de la base) ou révocation depuis GitHub.
 
 ## Les comptes
 

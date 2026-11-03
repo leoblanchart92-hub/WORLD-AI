@@ -3,6 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Lancement de l'installeur d'APK pour appliquer une mise à jour. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Ouverture de github.com/login/device pendant la connexion GitHub. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+    </queries>
     <application
         android:label="WORLD-AI"
         android:name="${applicationName}"

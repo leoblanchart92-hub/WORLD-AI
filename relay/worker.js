@@ -28,6 +28,12 @@ const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 // Le jeton GitHub vit dans le secret GITHUB_TOKEN du Worker. Il n'est jamais
 // renvoyé au client : seul l'état des actions remonte dans la réponse.
 const GITHUB_API = 'https://api.github.com';
+// Connexion OAuth « device flow » : chaque personne relie son propre compte
+// GitHub, et le jeton obtenu reste dans la base du relais — jamais dans
+// l'application, jamais dans la réponse.
+const GITHUB_DEVICE_CODE_URL = 'https://github.com/login/device/code';
+const GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+const GITHUB_SCOPES = 'repo workflow read:user';
 const DEFAULT_GITHUB_REPO = 'leoblanchart92-hub/WORLD-AI';
 const MAX_TOOL_STEPS = 6;
 const MAX_TOOL_RESULT_CHARS = 12000;
@@ -123,6 +129,25 @@ async function ensureSchema(db) {
     ),
     db.prepare(
       'CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, created_at ASC)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS github_accounts (' +
+        'user_id TEXT PRIMARY KEY, ' +
+        'login TEXT NOT NULL, ' +
+        'token TEXT NOT NULL, ' +
+        'scopes TEXT NOT NULL DEFAULT "", ' +
+        'default_repo TEXT NOT NULL DEFAULT "", ' +
+        'created_at INTEGER NOT NULL, ' +
+        'updated_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS github_pending (' +
+        'id TEXT PRIMARY KEY, ' +
+        'user_id TEXT NOT NULL, ' +
+        'device_code TEXT NOT NULL, ' +
+        'interval INTEGER NOT NULL, ' +
+        'expires_at INTEGER NOT NULL, ' +
+        'created_at INTEGER NOT NULL)',
     ),
   ]);
   schemaReady = true;
@@ -573,7 +598,10 @@ function tool(name, description, properties = {}, required = []) {
       description,
       parameters: {
         type: 'object',
-        properties,
+        properties: {
+          repo: S('Dépôt visé, « propriétaire/nom ». Omets-le pour utiliser le dépôt courant.'),
+          ...properties,
+        },
         required,
         additionalProperties: false,
       },
@@ -586,6 +614,9 @@ const N = (description) => ({ type: 'number', description });
 const B = (description) => ({ type: 'boolean', description });
 
 const GITHUB_TOOLS = [
+  tool('github_list_repos', 'Liste les dépôts du compte GitHub connecté, du plus récemment modifié au plus ancien.', {
+    limit: N('Nombre maximum (défaut 30).'),
+  }),
   tool('github_repo_info', 'Décrit le dépôt GitHub configuré : branche par défaut, langage, nombres d’issues et d’étoiles.', {}),
   tool('github_list_files', 'Liste l’arborescence des fichiers du dépôt.', {
     path: S('Dossier de départ, vide pour la racine.'),
@@ -679,14 +710,34 @@ const GITHUB_TOOLS = [
   }, ['workflow']),
 ];
 
-function githubConfigured(env) {
-  return typeof env.GITHUB_TOKEN === 'string' && env.GITHUB_TOKEN.trim().length > 0;
+function githubConfigured(ctx) {
+  return Boolean(ctx && typeof ctx.GITHUB_TOKEN === 'string' && ctx.GITHUB_TOKEN.trim().length > 0);
 }
 
-function githubRepo(env) {
+/** L'application OAuth est-elle installée sur ce relais ? */
+function githubOauthConfigured(env) {
+  return (
+    typeof env.GITHUB_CLIENT_ID === 'string' &&
+    env.GITHUB_CLIENT_ID.trim().length > 0 &&
+    typeof env.GITHUB_CLIENT_SECRET === 'string' &&
+    env.GITHUB_CLIENT_SECRET.trim().length > 0
+  );
+}
+
+function envDefaultRepo(env) {
   const raw = typeof env.GITHUB_REPO === 'string' ? env.GITHUB_REPO.trim() : '';
   const repo = raw || DEFAULT_GITHUB_REPO;
   return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : DEFAULT_GITHUB_REPO;
+}
+
+/** Dépôt visé : argument de l'outil, puis dépôt courant du compte. Vide =
+ * compte personnel sans dépôt choisi, l'outil demande alors de préciser. */
+function ghRepo(ctx, override) {
+  const explicit = typeof override === 'string' ? override.trim() : '';
+  let repo = explicit || (typeof ctx.GITHUB_REPO === 'string' ? ctx.GITHUB_REPO.trim() : '');
+  if (repo && !repo.includes('/') && ctx.GITHUB_LOGIN) repo = `${ctx.GITHUB_LOGIN}/${repo}`;
+  if (!repo) return ctx.GITHUB_LOGIN ? '' : DEFAULT_GITHUB_REPO;
+  return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : '';
 }
 
 async function gh(env, path, init = {}) {
@@ -741,10 +792,39 @@ async function defaultBranch(env, repo) {
 }
 
 /** Exécute un appel d’outil GitHub et renvoie { result, summary, ok }. */
-async function runGithubTool(env, name, args) {
-  const repo = githubRepo(env);
-  const base = `/repos/${repo}`;
+async function runGithubTool(ctx, name, args) {
+  const env = ctx;
   const a = args && typeof args === 'object' ? args : {};
+
+  if (name === 'github_list_repos') {
+    const limit = Math.min(Math.max(Number(a.limit) || 30, 1), 100);
+    const r = await gh(
+      env,
+      '/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member',
+    );
+    if (!r.ok) return { ok: false, summary: 'Dépôts illisibles', result: ghError(r) };
+    const repos = (Array.isArray(r.data) ? r.data : []).slice(0, limit).map((item) => ({
+      full_name: item.full_name,
+      private: Boolean(item.private),
+      default_branch: item.default_branch,
+      can_push: Boolean(item.permissions?.push),
+      updated_at: item.updated_at,
+    }));
+    return { ok: true, summary: `${repos.length} dépôt(s)`, result: { repos } };
+  }
+
+  const repo = ghRepo(env, a.repo);
+  if (!repo) {
+    return {
+      ok: false,
+      summary: 'Dépôt à préciser',
+      result: {
+        error:
+          'Aucun dépôt courant : appelle github_list_repos, puis indique « repo » (« propriétaire/nom »).',
+      },
+    };
+  }
+  const base = `/repos/${repo}`;
 
   switch (name) {
     case 'github_repo_info': {
@@ -1215,14 +1295,20 @@ async function relay(request, env) {
     );
   }
 
-  const ghReady = githubConfigured(env);
+  // GitHub de la personne connectée : son jeton, son compte, ses dépôts. Un
+  // invité ne peut utiliser que le jeton du relais s'il en existe un.
+  const ghCtx = await githubContext(request, env);
+  const ghReady = githubConfigured(ghCtx);
   const systemPrompt = ghReady
-    ? `${SYSTEM_PROMPT} Tu peux agir sur le dépôt GitHub ${githubRepo(env)} grâce aux outils fournis : ` +
-      'lis le code avant de le modifier, écris des fichiers complets, et crée des branches et des pull requests ' +
+    ? `${SYSTEM_PROMPT} Tu es connecté au compte GitHub ${ghCtx.GITHUB_LOGIN || 'demandé'} et tu peux agir sur ses dépôts grâce aux outils fournis` +
+      (ghCtx.GITHUB_REPO
+        ? ` (dépôt courant : ${ghCtx.GITHUB_REPO}). `
+        : ' (aucun dépôt courant : appelle github_list_repos, puis indique « repo »). ') +
+      'Lis le code avant de le modifier, écris des fichiers complets, et crée une branche puis une pull request ' +
       'plutôt que de pousser directement sur la branche par défaut quand le changement est important. ' +
       'Annonce brièvement ce que tu fais, fais-le, puis résume le résultat. ' +
       'N’invente jamais une action : si un outil échoue, dis-le avec l’erreur réelle.'
-    : `${SYSTEM_PROMPT} Tu n’as aucun accès à GitHub : ne prétends jamais avoir lu ou modifié un dépôt.`;
+    : `${SYSTEM_PROMPT} Tu n’as aucun accès à GitHub : ne prétends jamais avoir lu ou modifié un dépôt. Tu peux proposer de connecter un compte GitHub depuis l’application.`;
 
   const groqMessages = [{ role: 'system', content: systemPrompt }];
   for (let i = 0; i < messages.length; i += 1) {
@@ -1319,13 +1405,13 @@ async function relay(request, env) {
       let outcome;
       try {
         outcome = ghReady
-          ? await runGithubTool(env, name, args)
+          ? await runGithubTool(ghCtx, name, args)
           : {
               ok: false,
               summary: 'GitHub non connecté',
               result: {
                 error:
-                  'Le relais n’a pas de jeton GitHub : ajoute le secret GITHUB_TOKEN pour autoriser les actions.',
+                  'Aucun compte GitHub connecté : ouvre l’écran GitHub de l’application pour lier ton compte.',
               },
             };
       } catch (error) {
@@ -1493,6 +1579,291 @@ async function appendMessagesRoute(request, env, conversationId) {
   return json({ ok: true });
 }
 
+/* ------------------------------------------- Comptes GitHub (OAuth device) */
+
+/** Jeton GitHub de la personne connectée, ou celui du relais pour un invité. */
+async function githubContext(request, env) {
+  const user = env.DB ? await currentUser(request, env.DB) : null;
+  const account = user ? await githubAccount(env, user.id) : null;
+  const fallback =
+    typeof env.GITHUB_TOKEN === 'string' ? env.GITHUB_TOKEN.trim() : '';
+  const token = account?.token || (user ? '' : fallback);
+  if (!token) return null;
+  return {
+    GITHUB_TOKEN: token,
+    GITHUB_LOGIN: account?.login || '',
+    GITHUB_REPO: (account?.default_repo || '').trim() || (user ? '' : envDefaultRepo(env)),
+  };
+}
+
+async function githubAccount(env, userId) {
+  if (!env.DB) return null;
+  const row = await env.DB.prepare(
+    'SELECT login, token, scopes, default_repo FROM github_accounts WHERE user_id = ?',
+  )
+    .bind(userId)
+    .first();
+  return row ?? null;
+}
+
+async function saveGithubAccount(env, userId, login, token, scopes) {
+  const now = Date.now();
+  await env.DB.prepare(
+    'INSERT INTO github_accounts (user_id, login, token, scopes, default_repo, created_at, updated_at) ' +
+      'VALUES (?, ?, ?, ?, "", ?, ?) ' +
+      'ON CONFLICT(user_id) DO UPDATE SET login = excluded.login, token = excluded.token, ' +
+      'scopes = excluded.scopes, updated_at = excluded.updated_at',
+  )
+    .bind(userId, login, token, scopes, now, now)
+    .run();
+}
+
+/** Lit le compte GitHub derrière un jeton : sert à valider avant de le garder. */
+async function githubViewer(token) {
+  try {
+    const res = await fetch(`${GITHUB_API}/user`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'WORLD-AI-relay',
+      },
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data.login !== 'string') return { ok: false, status: 0 };
+    return { ok: true, login: data.login };
+  } catch (error) {
+    console.error('GitHub /user injoignable', error);
+    return { ok: false, status: 0 };
+  }
+}
+
+async function signedIn(request, env) {
+  if (!env.DB) return null;
+  await ensureSchema(env.DB);
+  return currentUser(request, env.DB);
+}
+
+/** État de la connexion GitHub du compte. */
+async function githubStatusRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) {
+    return json({
+      ok: true,
+      signedIn: false,
+      deviceFlow: githubOauthConfigured(env),
+      connected: false,
+      login: null,
+      defaultRepo: '',
+    });
+  }
+  const account = await githubAccount(env, user.id);
+  return json({
+    ok: true,
+    signedIn: true,
+    deviceFlow: githubOauthConfigured(env),
+    connected: Boolean(account),
+    login: account?.login ?? null,
+    defaultRepo: account?.default_repo || '',
+  });
+}
+
+/** Démarre une connexion OAuth : le relais obtient un code à recopier. */
+async function githubDeviceStartRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) {
+    return fail(401, 'unauthorized', 'Connecte-toi à un compte WORLD-AI pour lier ton GitHub.');
+  }
+  if (!githubOauthConfigured(env)) {
+    return fail(
+      503,
+      'not_configured',
+      'La connexion GitHub n’est pas installée sur le relais : ajoute GITHUB_CLIENT_ID et GITHUB_CLIENT_SECRET.',
+    );
+  }
+  let data = null;
+  let status = 0;
+  try {
+    const res = await fetch(GITHUB_DEVICE_CODE_URL, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID.trim(), scope: GITHUB_SCOPES }),
+    });
+    status = res.status;
+    data = await res.json().catch(() => null);
+  } catch (error) {
+    console.error('GitHub device/code injoignable', error);
+  }
+  if (!data || typeof data.device_code !== 'string' || typeof data.user_code !== 'string') {
+    console.error('GitHub device/code a répondu', status);
+    return fail(502, 'upstream', 'GitHub n’a pas voulu démarrer la connexion.');
+  }
+  const id = uid();
+  const interval = Math.min(Math.max(Number(data.interval) || 5, 3), 30);
+  const expiresIn = Math.min(Math.max(Number(data.expires_in) || 900, 60), 1800);
+  await env.DB.prepare('DELETE FROM github_pending WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare(
+    'INSERT INTO github_pending (id, user_id, device_code, interval, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  )
+    .bind(id, user.id, data.device_code, interval, Date.now() + expiresIn * 1000, Date.now())
+    .run();
+  return json({
+    ok: true,
+    id,
+    userCode: data.user_code,
+    verificationUri:
+      typeof data.verification_uri === 'string'
+        ? data.verification_uri
+        : 'https://github.com/login/device',
+    interval,
+    expiresIn,
+  });
+}
+
+/** Suite du device flow : l'application interroge le relais, qui interroge
+ * GitHub, jusqu'à ce que la personne ait validé le code. */
+async function githubDevicePollRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const payload = await request.json().catch(() => null);
+  const id = typeof payload?.id === 'string' ? payload.id : '';
+  if (!id) return fail(400, 'bad_request', 'Identifiant de connexion manquant.');
+
+  const pending = await env.DB.prepare(
+    'SELECT device_code, expires_at FROM github_pending WHERE id = ? AND user_id = ?',
+  )
+    .bind(id, user.id)
+    .first();
+  if (!pending) return json({ ok: true, status: 'expired' });
+  if (pending.expires_at <= Date.now()) {
+    await env.DB.prepare('DELETE FROM github_pending WHERE id = ?').bind(id).run();
+    return json({ ok: true, status: 'expired' });
+  }
+
+  let data = null;
+  try {
+    const res = await fetch(GITHUB_ACCESS_TOKEN_URL, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: env.GITHUB_CLIENT_ID.trim(),
+        client_secret: env.GITHUB_CLIENT_SECRET.trim(),
+        device_code: pending.device_code,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      }),
+    });
+    data = await res.json().catch(() => null);
+  } catch (error) {
+    console.error('GitHub access_token injoignable', error);
+  }
+
+  const token = typeof data?.access_token === 'string' ? data.access_token : '';
+  if (!token) {
+    const error = typeof data?.error === 'string' ? data.error : 'upstream';
+    if (error === 'authorization_pending') return json({ ok: true, status: 'pending' });
+    if (error === 'slow_down') return json({ ok: true, status: 'slow_down' });
+    if (error === 'expired_token') {
+      await env.DB.prepare('DELETE FROM github_pending WHERE id = ?').bind(id).run();
+      return json({ ok: true, status: 'expired' });
+    }
+    if (error === 'access_denied') {
+      await env.DB.prepare('DELETE FROM github_pending WHERE id = ?').bind(id).run();
+      return json({ ok: true, status: 'denied' });
+    }
+    if (error === 'incorrect_client_credentials' || error === 'device_flow_disabled') {
+      console.error('GitHub OAuth mal configuré', error);
+      return fail(
+        503,
+        'not_configured',
+        'La connexion GitHub du relais est mal configurée (identifiants ou device flow).',
+      );
+    }
+    console.error('GitHub token a répondu', error);
+    return fail(502, 'upstream', 'GitHub a refusé la connexion.');
+  }
+
+  const viewer = await githubViewer(token);
+  if (!viewer.ok) return fail(502, 'upstream', 'Le compte GitHub n’a pas pu être lu.');
+  await saveGithubAccount(env, user.id, viewer.login, token, typeof data.scope === 'string' ? data.scope : '');
+  await env.DB.prepare('DELETE FROM github_pending WHERE id = ?').bind(id).run();
+  return json({ ok: true, status: 'connected', login: viewer.login });
+}
+
+/** Connexion manuelle : la personne colle un jeton d'accès personnel. */
+async function githubTokenRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const payload = await request.json().catch(() => null);
+  const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+  if (!/^(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})$/.test(token)) {
+    return fail(400, 'bad_token', 'Ce texte ne ressemble pas à un jeton GitHub.');
+  }
+  const viewer = await githubViewer(token);
+  if (!viewer.ok) {
+    return fail(400, 'bad_token', 'GitHub refuse ce jeton : expiré, révoqué ou sans les bons droits.');
+  }
+  await saveGithubAccount(env, user.id, viewer.login, token, '');
+  return json({ ok: true, login: viewer.login });
+}
+
+async function githubReposRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const account = await githubAccount(env, user.id);
+  if (!account) return fail(400, 'not_connected', 'Connecte ton compte GitHub d’abord.');
+  const r = await gh(
+    { GITHUB_TOKEN: account.token },
+    '/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member',
+  );
+  if (!r.ok) return fail(502, 'upstream', 'La liste des dépôts n’a pas pu être lue.');
+  const repos = (Array.isArray(r.data) ? r.data : []).map((item) => ({
+    full_name: item.full_name,
+    private: Boolean(item.private),
+    default_branch: item.default_branch,
+    can_push: Boolean(item.permissions?.push),
+  }));
+  return json({ ok: true, repos });
+}
+
+async function githubRepoRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const account = await githubAccount(env, user.id);
+  if (!account) return fail(400, 'not_connected', 'Connecte ton compte GitHub d’abord.');
+  const payload = await request.json().catch(() => null);
+  const raw = typeof payload?.repo === 'string' ? payload.repo.trim() : '';
+  if (!raw) {
+    await env.DB.prepare('UPDATE github_accounts SET default_repo = "", updated_at = ? WHERE user_id = ?')
+      .bind(Date.now(), user.id)
+      .run();
+    return json({ ok: true, defaultRepo: '' });
+  }
+  const repo = /^[\w.-]+\/[\w.-]+$/.test(raw) ? raw : `${account.login}/${raw}`;
+  const check = await gh({ GITHUB_TOKEN: account.token }, `/repos/${repo}`);
+  if (!check.ok) return fail(400, 'bad_repo', 'Ce dépôt est introuvable ou inaccessible avec ce compte.');
+  const fullName = check.data?.full_name || repo;
+  await env.DB.prepare('UPDATE github_accounts SET default_repo = ?, updated_at = ? WHERE user_id = ?')
+    .bind(fullName, Date.now(), user.id)
+    .run();
+  return json({ ok: true, defaultRepo: fullName });
+}
+
+async function githubDisconnectRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  await env.DB.prepare('DELETE FROM github_accounts WHERE user_id = ?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM github_pending WHERE user_id = ?').bind(user.id).run();
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -1502,15 +1873,43 @@ export default {
     }
 
     if (url.pathname === '/') {
-      return statusPage(Boolean(env.GROQ_API_KEY), githubConfigured(env));
+      return statusPage(Boolean(env.GROQ_API_KEY), githubConfigured(env) || githubOauthConfigured(env));
     }
 
     if (url.pathname === '/health') {
       return json({
         ok: true,
         configured: Boolean(env.GROQ_API_KEY),
-        github: githubConfigured(env),
+        github: githubConfigured(env) || githubOauthConfigured(env),
+        githubOauth: githubOauthConfigured(env),
       });
+    }
+
+    if (url.pathname === '/github') {
+      if (request.method === 'GET') return githubStatusRoute(request, env);
+      if (request.method === 'PATCH' || request.method === 'PUT') return githubRepoRoute(request, env);
+      if (request.method === 'DELETE') return githubDisconnectRoute(request, env);
+      return fail(405, 'method', 'Utilise GET, PATCH ou DELETE.');
+    }
+
+    if (url.pathname === '/github/device') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return githubDeviceStartRoute(request, env);
+    }
+
+    if (url.pathname === '/github/device/poll') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return githubDevicePollRoute(request, env);
+    }
+
+    if (url.pathname === '/github/token') {
+      if (request.method !== 'POST') return fail(405, 'method', 'Utilise POST.');
+      return githubTokenRoute(request, env);
+    }
+
+    if (url.pathname === '/github/repos') {
+      if (request.method !== 'GET') return fail(405, 'method', 'Utilise GET.');
+      return githubReposRoute(request, env);
     }
 
     if (url.pathname === '/auth/register') {
