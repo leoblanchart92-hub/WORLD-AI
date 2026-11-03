@@ -8,6 +8,19 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '2.3.0',
+      title: 'L’IA agit sur ton GitHub et lit tes fichiers',
+      icon: Icons.hub_rounded,
+      changes: [
+        'Nouvel écran GitHub dans le menu : connecte ton propre compte avec un simple code affiché par l’application.',
+        'Ton jeton reste sur le relais, jamais dans l’application : personne d’autre ne peut agir avec.',
+        'Choisis le dépôt courant en un geste ; l’IA peut aussi lister tes dépôts et travailler sur celui que tu nommes, privés compris.',
+        'L’IA lit ton code, crée une branche, écrit des fichiers, ouvre une issue ou une pull request, fusionne et lance un workflow — chaque action s’affiche sous la réponse.',
+        'Tu peux aussi coller un jeton d’accès personnel si tu préfères, et déconnecter GitHub à tout moment.',
+        'Joins une image ou un fichier texte à ton message : l’IA les regarde et les lit.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '2.1.0',
       title: 'Icône à côté de tes messages',
       icon: Icons.person_pin_rounded,
