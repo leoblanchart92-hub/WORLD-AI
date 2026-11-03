@@ -249,6 +249,33 @@ anonymement dans D1, sans jamais bloquer une requête.
 
 Pour viser un autre relais : `--dart-define=AI_RELAY_URL=https://…`.
 
+## Les actions GitHub de l’IA
+
+Quand le relais détient un jeton GitHub, l’IA peut **agir** sur le dépôt au lieu
+de seulement en parler : lire le code, ouvrir et commenter des issues, créer une
+branche, écrire des fichiers (un commit), ouvrir et fusionner une pull request,
+déclencher un workflow Actions. L’application affiche chaque action sous la
+réponse, avec une coche ou une croix.
+
+| Secret / variable | Rôle |
+| --- | --- |
+| `GITHUB_TOKEN` | Jeton GitHub (fine-grained) : lecture du contenu, issues, pull requests, Actions. Sans lui, les outils GitHub sont désactivés et l’IA le dit. |
+| `GITHUB_REPO` | Dépôt ciblé, par défaut `leoblanchart92-hub/WORLD-AI`. Un seul dépôt à la fois. |
+
+**Poser le jeton** : tableau de bord d’hébergement → projet *WORLD-AI relay* →
+*Secrets* → nom `GITHUB_TOKEN`. Utiliser un jeton *fine-grained* limité au dépôt
+concerné, avec les droits **Contents: Read and write**, **Issues: Read and
+write**, **Pull requests: Read and write** et **Actions: Read and write**. Le
+jeton reste côté Worker : il n’est jamais renvoyé à l’application, ni écrit dans
+le dépôt. `/health` renvoie alors `{"github":true}`.
+
+Comportement : au plus six étapes d’outils par message (lecture puis écriture),
+puis l’IA résume ce qu’elle a fait. Chaque action est renvoyée dans `actions` et
+n’est jamais inventée : un échec remonte avec l’erreur réelle de GitHub.
+
+Pour retirer cet accès, supprimer `GITHUB_TOKEN` : le relais redevient un simple
+relais de discussion.
+
 ## Les comptes
 
 Les comptes vivent dans la base D1 du relais : aucune dépendance à un service

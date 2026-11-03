@@ -24,8 +24,21 @@ const MODELS = new Set([
 ]);
 const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
+// ---------------------------------------------------------------- GitHub
+// Le jeton GitHub vit dans le secret GITHUB_TOKEN du Worker. Il n'est jamais
+// renvoyé au client : seul l'état des actions remonte dans la réponse.
+const GITHUB_API = 'https://api.github.com';
+const DEFAULT_GITHUB_REPO = 'leoblanchart92-hub/WORLD-AI';
+const MAX_TOOL_STEPS = 6;
+const MAX_TOOL_RESULT_CHARS = 12000;
+const MAX_WRITE_FILES = 12;
+const MAX_FILE_CONTENT_CHARS = 200000;
+
 const MAX_MESSAGES = 24;
 const MAX_CONTENT_CHARS = 4000;
+const MAX_ATTACHMENT_CHARS = 8000;
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_COMPLETION_TOKENS = 1024;
 // 0 = aucune limite. Les compteurs restent tenus à jour pour le suivi,
 // mais ils ne bloquent plus jamais une requête.
@@ -131,10 +144,13 @@ function fail(status, code, message) {
 
 /** Page d'état lisible : l'adresse n'est pas un site, mais elle ne doit pas
  * ressembler à une panne quand on l'ouvre dans un navigateur. */
-function statusPage(configured) {
+function statusPage(configured, github = false) {
   const badge = configured
     ? '<span class="ok">Clé Groq configurée</span>'
     : '<span class="bad">Clé Groq manquante</span>';
+  const githubBadge = github
+    ? '<span class="ok">GitHub connecté</span>'
+    : '<span class="bad">GitHub non connecté</span>';
   const hint = configured
     ? 'Le relais transmet les messages de l’application à Groq.'
     : 'Ajoute le secret <code>GROQ_API_KEY</code> dans l’onglet Secrets du projet pour activer les réponses.';
@@ -161,6 +177,8 @@ function statusPage(configured) {
       '<p>Ce n’est pas le site WORLD-AI : cette adresse sert uniquement au ' +
       'fonctionnement de l’application.</p>' +
       badge +
+      ' ' +
+      githubBadge +
       '<p style="margin-top:14px">' +
       hint +
       '</p>' +
@@ -204,6 +222,20 @@ async function bump(db, day, device) {
     .run();
 }
 
+function isImageMime(mime) {
+  return typeof mime === 'string' && mime.startsWith('image/');
+}
+
+function isTextLikeMime(mime) {
+  if (typeof mime !== 'string') return false;
+  if (mime.startsWith('text/')) return true;
+  if (mime === 'application/json') return true;
+  if (mime === 'application/xml') return true;
+  if (mime === 'application/javascript') return true;
+  if (mime === 'application/typescript') return true;
+  return false;
+}
+
 /** Normalise et valide l'historique reçu depuis l'application. */
 function readMessages(body) {
   if (!body || !Array.isArray(body.messages)) return null;
@@ -219,7 +251,7 @@ function readMessages(body) {
     if (typeof content !== 'string') return null;
     const trimmed = content.trim();
     if (trimmed.length === 0 || trimmed.length > MAX_CONTENT_CHARS) return null;
-    messages.push({ role, content: trimmed });
+    messages.push({ role, content: trimmed, attachments: Array.isArray(raw.attachments) ? raw.attachments : [] });
   }
   if (messages[messages.length - 1].role !== 'user') return null;
   return messages;
@@ -531,6 +563,598 @@ async function logout(request, env) {
   return json({ ok: true });
 }
 
+/* ---------------------------------------------------------------- GitHub */
+
+function tool(name, description, properties = {}, required = []) {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description,
+      parameters: {
+        type: 'object',
+        properties,
+        required,
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
+const S = (description) => ({ type: 'string', description });
+const N = (description) => ({ type: 'number', description });
+const B = (description) => ({ type: 'boolean', description });
+
+const GITHUB_TOOLS = [
+  tool('github_repo_info', 'Décrit le dépôt GitHub configuré : branche par défaut, langage, nombres d’issues et d’étoiles.', {}),
+  tool('github_list_files', 'Liste l’arborescence des fichiers du dépôt.', {
+    path: S('Dossier de départ, vide pour la racine.'),
+    branch: S('Branche (défaut : branche par défaut du dépôt).'),
+    limit: N('Nombre maximum de chemins renvoyés (défaut 200).'),
+  }),
+  tool('github_read_file', 'Lit le contenu texte d’un fichier du dépôt.', {
+    path: S('Chemin du fichier dans le dépôt.'),
+    branch: S('Branche (défaut : branche par défaut).'),
+  }, ['path']),
+  tool('github_search_code', 'Cherche du texte dans le code du dépôt.', {
+    query: S('Texte ou motif à chercher.'),
+    limit: N('Nombre maximum de résultats (défaut 20).'),
+  }, ['query']),
+  tool('github_list_branches', 'Liste les branches du dépôt.', {}),
+  tool('github_list_commits', 'Liste les derniers commits.', {
+    limit: N('Nombre de commits (défaut 15).'),
+    path: S('Limiter à un fichier ou dossier.'),
+    branch: S('Branche.'),
+  }),
+  tool('github_list_issues', 'Liste les issues (et pull requests) du dépôt.', {
+    state: S('open, closed ou all (défaut open).'),
+    limit: N('Nombre maximum (défaut 20).'),
+  }),
+  tool('github_get_issue', 'Lit une issue avec ses commentaires.', {
+    number: N('Numéro de l’issue.'),
+  }, ['number']),
+  tool('github_create_issue', 'Ouvre une nouvelle issue.', {
+    title: S('Titre de l’issue.'),
+    body: S('Description en Markdown.'),
+    labels: { type: 'array', items: { type: 'string' }, description: 'Étiquettes à poser.' },
+  }, ['title']),
+  tool('github_comment_issue', 'Ajoute un commentaire à une issue ou une pull request.', {
+    number: N('Numéro de l’issue ou de la PR.'),
+    body: S('Commentaire en Markdown.'),
+  }, ['number', 'body']),
+  tool('github_set_issue_state', 'Ferme ou rouvre une issue.', {
+    number: N('Numéro de l’issue.'),
+    state: S('closed ou open.'),
+  }, ['number', 'state']),
+  tool('github_list_pulls', 'Liste les pull requests.', {
+    state: S('open, closed ou all (défaut open).'),
+    limit: N('Nombre maximum (défaut 20).'),
+  }),
+  tool('github_get_pull', 'Lit une pull request avec ses fichiers modifiés.', {
+    number: N('Numéro de la pull request.'),
+  }, ['number']),
+  tool('github_create_pull', 'Ouvre une pull request depuis une branche existante.', {
+    title: S('Titre de la pull request.'),
+    head: S('Branche source (celle qui contient les changements).'),
+    base: S('Branche cible (défaut : branche par défaut).'),
+    body: S('Description en Markdown.'),
+    draft: B('Ouvrir en brouillon.'),
+  }, ['title', 'head']),
+  tool('github_merge_pull', 'Fusionne une pull request.', {
+    number: N('Numéro de la pull request.'),
+    method: S('merge, squash ou rebase (défaut squash).'),
+  }, ['number']),
+  tool('github_write_files', 'Crée ou modifie un ou plusieurs fichiers et pousse un commit. C’est l’outil à utiliser pour écrire du code.', {
+    message: S('Message de commit.'),
+    branch: S('Branche à modifier (défaut : branche par défaut). Pour proposer une PR, crée d’abord une branche avec github_create_branch.'),
+    files: {
+      type: 'array',
+      description: 'Fichiers à écrire : contenu complet, pas un diff.',
+      items: {
+        type: 'object',
+        properties: {
+          path: S('Chemin du fichier.'),
+          content: S('Contenu complet du fichier.'),
+        },
+        required: ['path', 'content'],
+        additionalProperties: false,
+      },
+    },
+  }, ['message', 'files']),
+  tool('github_delete_file', 'Supprime un fichier et pousse un commit.', {
+    path: S('Chemin du fichier.'),
+    message: S('Message de commit.'),
+    branch: S('Branche.'),
+  }, ['path', 'message']),
+  tool('github_create_branch', 'Crée une branche à partir d’une autre.', {
+    name: S('Nom de la nouvelle branche.'),
+    from: S('Branche source (défaut : branche par défaut).'),
+  }, ['name']),
+  tool('github_list_workflow_runs', 'Liste les exécutions GitHub Actions du dépôt.', {
+    limit: N('Nombre maximum (défaut 10).'),
+  }),
+  tool('github_run_workflow', 'Déclenche un workflow GitHub Actions.', {
+    workflow: S('Nom du fichier de workflow, par exemple build-apk.yml.'),
+    ref: S('Branche (défaut : branche par défaut).'),
+  }, ['workflow']),
+];
+
+function githubConfigured(env) {
+  return typeof env.GITHUB_TOKEN === 'string' && env.GITHUB_TOKEN.trim().length > 0;
+}
+
+function githubRepo(env) {
+  const raw = typeof env.GITHUB_REPO === 'string' ? env.GITHUB_REPO.trim() : '';
+  const repo = raw || DEFAULT_GITHUB_REPO;
+  return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : DEFAULT_GITHUB_REPO;
+}
+
+async function gh(env, path, init = {}) {
+  const res = await fetch(`${GITHUB_API}${path}`, {
+    method: init.method || 'GET',
+    headers: {
+      authorization: `Bearer ${env.GITHUB_TOKEN.trim()}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'WORLD-AI-relay',
+      ...(init.body ? { 'content-type': 'application/json' } : {}),
+    },
+    body: init.body ? JSON.stringify(init.body) : undefined,
+  });
+  const raw = await res.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    data = null;
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+function ghError(result) {
+  const message =
+    result?.data && typeof result.data.message === 'string'
+      ? result.data.message
+      : `GitHub a répondu ${result?.status ?? '?'}`;
+  return { ok: false, error: message, status: result?.status ?? 0 };
+}
+
+function safePath(value) {
+  if (typeof value !== 'string') return null;
+  const path = value.trim().replace(/^\/+/, '');
+  if (path.length === 0 || path.length > 400) return null;
+  if (path.includes('..')) return null;
+  return path;
+}
+
+function clip(text, max = MAX_TOOL_RESULT_CHARS) {
+  if (typeof text !== 'string') return '';
+  return text.length > max ? `${text.slice(0, max)}\n… (tronqué)` : text;
+}
+
+async function defaultBranch(env, repo) {
+  const info = await gh(env, `/repos/${repo}`);
+  if (info.ok && typeof info.data?.default_branch === 'string') {
+    return info.data.default_branch;
+  }
+  return 'main';
+}
+
+/** Exécute un appel d’outil GitHub et renvoie { result, summary, ok }. */
+async function runGithubTool(env, name, args) {
+  const repo = githubRepo(env);
+  const base = `/repos/${repo}`;
+  const a = args && typeof args === 'object' ? args : {};
+
+  switch (name) {
+    case 'github_repo_info': {
+      const r = await gh(env, base);
+      if (!r.ok) return { ok: false, summary: 'Dépôt illisible', result: ghError(r) };
+      return {
+        ok: true,
+        summary: `Infos de ${repo}`,
+        result: {
+          full_name: r.data.full_name,
+          description: r.data.description,
+          default_branch: r.data.default_branch,
+          language: r.data.language,
+          private: r.data.private,
+          open_issues: r.data.open_issues_count,
+          stars: r.data.stargazers_count,
+          updated_at: r.data.updated_at,
+        },
+      };
+    }
+
+    case 'github_list_files': {
+      const branch = typeof a.branch === 'string' && a.branch ? a.branch : await defaultBranch(env, repo);
+      const r = await gh(env, `${base}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+      if (!r.ok) return { ok: false, summary: 'Arborescence illisible', result: ghError(r) };
+      const prefix = typeof a.path === 'string' ? a.path.trim().replace(/^\/+/, '') : '';
+      const limit = Math.min(Math.max(Number(a.limit) || 200, 1), 500);
+      const paths = (Array.isArray(r.data?.tree) ? r.data.tree : [])
+        .filter((item) => item.type === 'blob')
+        .map((item) => item.path)
+        .filter((p) => (prefix ? p.startsWith(prefix) : true))
+        .slice(0, limit);
+      return { ok: true, summary: `${paths.length} fichier(s) listé(s)`, result: { branch, files: paths } };
+    }
+
+    case 'github_read_file': {
+      const path = safePath(a.path);
+      if (!path) return { ok: false, summary: 'Chemin invalide', result: { error: 'Chemin invalide.' } };
+      const branch = typeof a.branch === 'string' && a.branch ? `?ref=${encodeURIComponent(a.branch)}` : '';
+      const r = await gh(env, `${base}/contents/${path.split('/').map(encodeURIComponent).join('/')}${branch}`);
+      if (!r.ok) return { ok: false, summary: `Lecture impossible : ${path}`, result: ghError(r) };
+      if (Array.isArray(r.data)) {
+        return { ok: true, summary: `Dossier ${path}`, result: { path, entries: r.data.map((e) => ({ name: e.name, type: e.type })) } };
+      }
+      let content = '';
+      if (r.data?.encoding === 'base64' && typeof r.data.content === 'string') {
+        try {
+          content = atob(r.data.content.replace(/\n/g, ''));
+        } catch (_) {
+          content = '';
+        }
+      }
+      return {
+        ok: true,
+        summary: `Lecture de ${path}`,
+        result: { path, size: r.data?.size, sha: r.data?.sha, content: clip(content) },
+      };
+    }
+
+    case 'github_search_code': {
+      const query = typeof a.query === 'string' ? a.query.trim() : '';
+      if (!query) return { ok: false, summary: 'Recherche vide', result: { error: 'Requête vide.' } };
+      const r = await gh(
+        env,
+        `/search/code?q=${encodeURIComponent(`${query} repo:${repo}`)}&per_page=${Math.min(Math.max(Number(a.limit) || 20, 1), 50)}`,
+      );
+      if (!r.ok) return { ok: false, summary: 'Recherche impossible', result: ghError(r) };
+      const items = (Array.isArray(r.data?.items) ? r.data.items : []).map((item) => ({
+        path: item.path,
+        matches: (item.text_matches || []).map((m) => clip(m.fragment, 400)).join('\n---\n'),
+      }));
+      return { ok: true, summary: `${items.length} résultat(s) pour « ${query} »`, result: { query, items } };
+    }
+
+    case 'github_list_branches': {
+      const r = await gh(env, `${base}/branches?per_page=100`);
+      if (!r.ok) return { ok: false, summary: 'Branches illisibles', result: ghError(r) };
+      return { ok: true, summary: 'Branches listées', result: { branches: r.data.map((b) => b.name) } };
+    }
+
+    case 'github_list_commits': {
+      const limit = Math.min(Math.max(Number(a.limit) || 15, 1), 50);
+      const params = new URLSearchParams({ per_page: String(limit) });
+      if (typeof a.branch === 'string' && a.branch) params.set('sha', a.branch);
+      if (typeof a.path === 'string' && a.path) params.set('path', a.path);
+      const r = await gh(env, `${base}/commits?${params.toString()}`);
+      if (!r.ok) return { ok: false, summary: 'Commits illisibles', result: ghError(r) };
+      const commits = r.data.map((c) => ({
+        sha: c.sha?.slice(0, 7),
+        message: clip(c.commit?.message || '', 300),
+        author: c.commit?.author?.name,
+        date: c.commit?.author?.date,
+      }));
+      return { ok: true, summary: `${commits.length} commit(s)`, result: { commits } };
+    }
+
+    case 'github_list_issues': {
+      const state = ['open', 'closed', 'all'].includes(a.state) ? a.state : 'open';
+      const limit = Math.min(Math.max(Number(a.limit) || 20, 1), 50);
+      const r = await gh(env, `${base}/issues?state=${state}&per_page=${limit}`);
+      if (!r.ok) return { ok: false, summary: 'Issues illisibles', result: ghError(r) };
+      const items = r.data.map((i) => ({
+        number: i.number,
+        title: i.title,
+        state: i.state,
+        is_pull_request: Boolean(i.pull_request),
+        user: i.user?.login,
+      }));
+      return { ok: true, summary: `${items.length} issue(s)`, result: { issues: items } };
+    }
+
+    case 'github_get_issue': {
+      const number = Number(a.number);
+      if (!Number.isFinite(number)) return { ok: false, summary: 'Numéro manquant', result: { error: 'Numéro invalide.' } };
+      const [issue, comments] = await Promise.all([
+        gh(env, `${base}/issues/${number}`),
+        gh(env, `${base}/issues/${number}/comments?per_page=50`),
+      ]);
+      if (!issue.ok) return { ok: false, summary: `Issue #${number} illisible`, result: ghError(issue) };
+      return {
+        ok: true,
+        summary: `Issue #${number} lue`,
+        result: {
+          number: issue.data.number,
+          title: issue.data.title,
+          state: issue.data.state,
+          body: clip(issue.data.body || '', 4000),
+          comments: (Array.isArray(comments.data) ? comments.data : []).map((c) => ({
+            user: c.user?.login,
+            body: clip(c.body || '', 1200),
+          })),
+        },
+      };
+    }
+
+    case 'github_create_issue': {
+      const title = typeof a.title === 'string' ? a.title.trim() : '';
+      if (!title) return { ok: false, summary: 'Titre manquant', result: { error: 'Titre requis.' } };
+      const r = await gh(env, `${base}/issues`, {
+        method: 'POST',
+        body: {
+          title,
+          body: typeof a.body === 'string' ? a.body : '',
+          labels: Array.isArray(a.labels) ? a.labels.filter((l) => typeof l === 'string') : undefined,
+        },
+      });
+      if (!r.ok) return { ok: false, summary: 'Création refusée', result: ghError(r) };
+      return { ok: true, summary: `Issue #${r.data.number} créée`, result: { number: r.data.number, url: r.data.html_url } };
+    }
+
+    case 'github_comment_issue': {
+      const number = Number(a.number);
+      const body = typeof a.body === 'string' ? a.body : '';
+      if (!Number.isFinite(number) || !body.trim()) {
+        return { ok: false, summary: 'Commentaire incomplet', result: { error: 'Numéro et texte requis.' } };
+      }
+      const r = await gh(env, `${base}/issues/${number}/comments`, { method: 'POST', body: { body } });
+      if (!r.ok) return { ok: false, summary: 'Commentaire refusé', result: ghError(r) };
+      return { ok: true, summary: `Commentaire sur #${number}`, result: { url: r.data.html_url } };
+    }
+
+    case 'github_set_issue_state': {
+      const number = Number(a.number);
+      const state = a.state === 'open' ? 'open' : 'closed';
+      if (!Number.isFinite(number)) return { ok: false, summary: 'Numéro manquant', result: { error: 'Numéro invalide.' } };
+      const r = await gh(env, `${base}/issues/${number}`, { method: 'PATCH', body: { state } });
+      if (!r.ok) return { ok: false, summary: 'Changement refusé', result: ghError(r) };
+      return { ok: true, summary: `Issue #${number} → ${state}`, result: { state: r.data.state } };
+    }
+
+    case 'github_list_pulls': {
+      const state = ['open', 'closed', 'all'].includes(a.state) ? a.state : 'open';
+      const limit = Math.min(Math.max(Number(a.limit) || 20, 1), 50);
+      const r = await gh(env, `${base}/pulls?state=${state}&per_page=${limit}`);
+      if (!r.ok) return { ok: false, summary: 'PR illisibles', result: ghError(r) };
+      const pulls = r.data.map((p) => ({
+        number: p.number,
+        title: p.title,
+        state: p.state,
+        head: p.head?.ref,
+        base: p.base?.ref,
+        user: p.user?.login,
+      }));
+      return { ok: true, summary: `${pulls.length} PR`, result: { pulls } };
+    }
+
+    case 'github_get_pull': {
+      const number = Number(a.number);
+      if (!Number.isFinite(number)) return { ok: false, summary: 'Numéro manquant', result: { error: 'Numéro invalide.' } };
+      const [pull, files] = await Promise.all([
+        gh(env, `${base}/pulls/${number}`),
+        gh(env, `${base}/pulls/${number}/files?per_page=50`),
+      ]);
+      if (!pull.ok) return { ok: false, summary: `PR #${number} illisible`, result: ghError(pull) };
+      return {
+        ok: true,
+        summary: `PR #${number} lue`,
+        result: {
+          number: pull.data.number,
+          title: pull.data.title,
+          state: pull.data.state,
+          merged: pull.data.merged,
+          head: pull.data.head?.ref,
+          base: pull.data.base?.ref,
+          body: clip(pull.data.body || '', 3000),
+          files: (Array.isArray(files.data) ? files.data : []).map((f) => ({
+            path: f.filename,
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+          })),
+        },
+      };
+    }
+
+    case 'github_create_pull': {
+      const title = typeof a.title === 'string' ? a.title.trim() : '';
+      const head = typeof a.head === 'string' ? a.head.trim() : '';
+      if (!title || !head) return { ok: false, summary: 'PR incomplète', result: { error: 'Titre et branche source requis.' } };
+      const baseBranch = typeof a.base === 'string' && a.base ? a.base : await defaultBranch(env, repo);
+      const r = await gh(env, `${base}/pulls`, {
+        method: 'POST',
+        body: {
+          title,
+          head,
+          base: baseBranch,
+          body: typeof a.body === 'string' ? a.body : '',
+          draft: a.draft === true,
+        },
+      });
+      if (!r.ok) return { ok: false, summary: 'PR refusée', result: ghError(r) };
+      return {
+        ok: true,
+        summary: `PR #${r.data.number} ouverte (${head} → ${baseBranch})`,
+        result: { number: r.data.number, url: r.data.html_url },
+      };
+    }
+
+    case 'github_merge_pull': {
+      const number = Number(a.number);
+      if (!Number.isFinite(number)) return { ok: false, summary: 'Numéro manquant', result: { error: 'Numéro invalide.' } };
+      const method = ['merge', 'squash', 'rebase'].includes(a.method) ? a.method : 'squash';
+      const r = await gh(env, `${base}/pulls/${number}/merge`, { method: 'PUT', body: { merge_method: method } });
+      if (!r.ok) return { ok: false, summary: 'Fusion refusée', result: ghError(r) };
+      return { ok: true, summary: `PR #${number} fusionnée`, result: { merged: r.data.merged, sha: r.data.sha } };
+    }
+
+    case 'github_create_branch': {
+      const name = typeof a.name === 'string' ? a.name.trim() : '';
+      if (!/^[\w./-]{1,200}$/.test(name)) {
+        return { ok: false, summary: 'Nom invalide', result: { error: 'Nom de branche invalide.' } };
+      }
+      const from = typeof a.from === 'string' && a.from ? a.from : await defaultBranch(env, repo);
+      const ref = await gh(env, `${base}/git/ref/heads/${encodeURIComponent(from)}`);
+      if (!ref.ok) return { ok: false, summary: 'Branche source inconnue', result: ghError(ref) };
+      const r = await gh(env, `${base}/git/refs`, {
+        method: 'POST',
+        body: { ref: `refs/heads/${name}`, sha: ref.data.object.sha },
+      });
+      if (!r.ok) return { ok: false, summary: 'Création de branche refusée', result: ghError(r) };
+      return { ok: true, summary: `Branche ${name} créée depuis ${from}`, result: { branch: name } };
+    }
+
+    case 'github_write_files': {
+      const files = Array.isArray(a.files) ? a.files : [];
+      const message = typeof a.message === 'string' && a.message.trim() ? a.message.trim() : 'Mise à jour depuis WORLD-AI';
+      if (files.length === 0) return { ok: false, summary: 'Aucun fichier', result: { error: 'Aucun fichier fourni.' } };
+      if (files.length > MAX_WRITE_FILES) {
+        return { ok: false, summary: 'Trop de fichiers', result: { error: `Maximum ${MAX_WRITE_FILES} fichiers par commit.` } };
+      }
+      const branch = typeof a.branch === 'string' && a.branch ? a.branch : await defaultBranch(env, repo);
+      const entries = [];
+      for (const file of files) {
+        const path = safePath(file?.path);
+        const content = typeof file?.content === 'string' ? file.content : '';
+        if (!path) return { ok: false, summary: 'Chemin invalide', result: { error: 'Chemin de fichier invalide.' } };
+        if (content.length > MAX_FILE_CONTENT_CHARS) {
+          return { ok: false, summary: 'Fichier trop gros', result: { error: `${path} dépasse la taille maximale.` } };
+        }
+        entries.push({ path, content });
+      }
+
+      const ref = await gh(env, `${base}/git/ref/heads/${encodeURIComponent(branch)}`);
+      if (!ref.ok) return { ok: false, summary: `Branche ${branch} introuvable`, result: ghError(ref) };
+      const parentSha = ref.data.object.sha;
+      const parent = await gh(env, `${base}/git/commits/${parentSha}`);
+      if (!parent.ok) return { ok: false, summary: 'Commit parent illisible', result: ghError(parent) };
+
+      const blobs = [];
+      for (const entry of entries) {
+        const blob = await gh(env, `${base}/git/blobs`, {
+          method: 'POST',
+          body: { content: entry.content, encoding: 'utf-8' },
+        });
+        if (!blob.ok) return { ok: false, summary: `Écriture refusée : ${entry.path}`, result: ghError(blob) };
+        blobs.push({ path: entry.path, mode: '100644', type: 'blob', sha: blob.data.sha });
+      }
+
+      const tree = await gh(env, `${base}/git/trees`, {
+        method: 'POST',
+        body: { base_tree: parent.data.tree.sha, tree: blobs },
+      });
+      if (!tree.ok) return { ok: false, summary: 'Arbre refusé', result: ghError(tree) };
+
+      const commit = await gh(env, `${base}/git/commits`, {
+        method: 'POST',
+        body: { message, tree: tree.data.sha, parents: [parentSha] },
+      });
+      if (!commit.ok) return { ok: false, summary: 'Commit refusé', result: ghError(commit) };
+
+      const update = await gh(env, `${base}/git/refs/heads/${encodeURIComponent(branch)}`, {
+        method: 'PATCH',
+        body: { sha: commit.data.sha, force: false },
+      });
+      if (!update.ok) return { ok: false, summary: 'Branche non mise à jour', result: ghError(update) };
+
+      return {
+        ok: true,
+        summary: `Commit ${commit.data.sha.slice(0, 7)} sur ${branch} (${entries.length} fichier(s))`,
+        result: {
+          sha: commit.data.sha,
+          branch,
+          files: entries.map((e) => e.path),
+          url: commit.data.html_url,
+        },
+      };
+    }
+
+    case 'github_delete_file': {
+      const path = safePath(a.path);
+      const message = typeof a.message === 'string' && a.message.trim() ? a.message.trim() : 'Suppression depuis WORLD-AI';
+      if (!path) return { ok: false, summary: 'Chemin invalide', result: { error: 'Chemin invalide.' } };
+      const branch = typeof a.branch === 'string' && a.branch ? a.branch : await defaultBranch(env, repo);
+      const current = await gh(env, `${base}/contents/${path}?ref=${encodeURIComponent(branch)}`);
+      if (!current.ok || !current.data?.sha) {
+        return { ok: false, summary: `Fichier introuvable : ${path}`, result: ghError(current) };
+      }
+      const r = await gh(env, `${base}/contents/${path}`, {
+        method: 'DELETE',
+        body: { message, sha: current.data.sha, branch },
+      });
+      if (!r.ok) return { ok: false, summary: 'Suppression refusée', result: ghError(r) };
+      return { ok: true, summary: `Fichier supprimé : ${path}`, result: { path, branch } };
+    }
+
+    case 'github_list_workflow_runs': {
+      const limit = Math.min(Math.max(Number(a.limit) || 10, 1), 30);
+      const r = await gh(env, `${base}/actions/runs?per_page=${limit}`);
+      if (!r.ok) return { ok: false, summary: 'Actions illisibles', result: ghError(r) };
+      const runs = (Array.isArray(r.data?.workflow_runs) ? r.data.workflow_runs : []).map((run) => ({
+        name: run.name,
+        branch: run.head_branch,
+        status: run.status,
+        conclusion: run.conclusion,
+        created_at: run.created_at,
+        url: run.html_url,
+      }));
+      return { ok: true, summary: `${runs.length} exécution(s)`, result: { runs } };
+    }
+
+    case 'github_run_workflow': {
+      const workflow = typeof a.workflow === 'string' ? a.workflow.trim() : '';
+      if (!workflow) return { ok: false, summary: 'Workflow manquant', result: { error: 'Nom du workflow requis.' } };
+      const ref = typeof a.ref === 'string' && a.ref ? a.ref : await defaultBranch(env, repo);
+      const r = await gh(env, `${base}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+        method: 'POST',
+        body: { ref },
+      });
+      if (!r.ok) return { ok: false, summary: 'Déclenchement refusé', result: ghError(r) };
+      return { ok: true, summary: `Workflow ${workflow} déclenché sur ${ref}`, result: { workflow, ref } };
+    }
+
+    default:
+      return { ok: false, summary: 'Outil inconnu', result: { error: `Outil inconnu : ${name}` } };
+  }
+}
+
+async function groqCall(env, body) {
+  try {
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.GROQ_API_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, data, networkError: false };
+  } catch (error) {
+    console.error('Groq injoignable', error);
+    return { ok: false, status: 0, data: null, networkError: true };
+  }
+}
+
+function groqFailure(result) {
+  if (result.networkError) {
+    return fail(502, 'upstream', 'L’IA est momentanément injoignable.');
+  }
+  if (result.status === 401 || result.status === 403) {
+    console.error('Clé Groq refusée', result.status);
+    return fail(503, 'not_configured', 'La clé de l’IA est invalide.');
+  }
+  if (result.status === 429) {
+    return fail(429, 'upstream_limit', 'L’IA est très sollicitée, réessaie dans un instant.');
+  }
+  console.error('Groq a répondu', result.status);
+  return fail(502, 'upstream', 'L’IA n’a pas pu répondre.');
+}
+
 async function relay(request, env) {
   const payload = await request.json().catch(() => null);
   const messages = readMessages(payload);
@@ -591,41 +1215,157 @@ async function relay(request, env) {
     );
   }
 
-  let upstream;
-  try {
-    upstream = await fetch(GROQ_URL, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${env.GROQ_API_KEY}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
-        max_completion_tokens: MAX_COMPLETION_TOKENS,
-        temperature: 0.7,
-      }),
+  const ghReady = githubConfigured(env);
+  const systemPrompt = ghReady
+    ? `${SYSTEM_PROMPT} Tu peux agir sur le dépôt GitHub ${githubRepo(env)} grâce aux outils fournis : ` +
+      'lis le code avant de le modifier, écris des fichiers complets, et crée des branches et des pull requests ' +
+      'plutôt que de pousser directement sur la branche par défaut quand le changement est important. ' +
+      'Annonce brièvement ce que tu fais, fais-le, puis résume le résultat. ' +
+      'N’invente jamais une action : si un outil échoue, dis-le avec l’erreur réelle.'
+    : `${SYSTEM_PROMPT} Tu n’as aucun accès à GitHub : ne prétends jamais avoir lu ou modifié un dépôt.`;
+
+  const groqMessages = [{ role: 'system', content: systemPrompt }];
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
+    const isLast = i === messages.length - 1;
+    const attachments = isLast && msg.role === 'user' && Array.isArray(msg.attachments) ? msg.attachments : [];
+    if (msg.role === 'user' && attachments.length > 0) {
+      const parts = [];
+      let text = msg.content;
+      for (const att of attachments) {
+        if (!att || typeof att !== 'object') continue;
+        const mime = typeof att.mime === 'string' ? att.mime : '';
+        const name = typeof att.name === 'string' ? att.name : 'fichier';
+        const data = typeof att.data === 'string' ? att.data : '';
+        if (!data) continue;
+        if (data.length > MAX_ATTACHMENT_BYTES * 4 / 3 + 1024) continue;
+        if (isImageMime(mime)) {
+          parts.push({ type: 'image_url', image_url: { url: data } });
+          continue;
+        }
+        if (isTextLikeMime(mime) || mime === 'application/pdf') {
+          try {
+            let decoded = '';
+            const b64 = data.includes(',') ? data.split(',')[1] : data;
+            decoded = atob(b64);
+            if (decoded.length > 0 && decoded.length <= MAX_ATTACHMENT_CHARS) {
+              text += `\n\n[Pièce jointe : ${name}]\n${decoded}`;
+            } else if (decoded.length > MAX_ATTACHMENT_CHARS) {
+              text += `\n\n[Pièce jointe : ${name}]\n${decoded.slice(0, MAX_ATTACHMENT_CHARS)}\n... (tronqué)`;
+            }
+          } catch (_) {
+            text += `\n\n[Pièce jointe : ${name}] (contenu non lisible)`;
+          }
+          continue;
+        }
+        text += `\n\n[Pièce jointe : ${name} (${mime || 'inconnu'})]`;
+      }
+      if (parts.length > 0) {
+        const contentParts = [];
+        if (text.trim()) contentParts.push({ type: 'text', text: text.trim() });
+        contentParts.push(...parts);
+        groqMessages.push({ role: 'user', content: contentParts });
+      } else {
+        groqMessages.push({ role: 'user', content: text.trim() });
+      }
+    } else {
+      groqMessages.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  let toolMode = ghReady;
+  const actions = [];
+  let text = '';
+
+  for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
+    const result = await groqCall(env, {
+      model,
+      messages: groqMessages,
+      max_completion_tokens: MAX_COMPLETION_TOKENS,
+      temperature: 0.7,
+      ...(toolMode ? { tools: GITHUB_TOOLS, tool_choice: 'auto' } : {}),
     });
-  } catch (error) {
-    console.error('Groq injoignable', error);
-    return fail(502, 'upstream', 'L’IA est momentanément injoignable.');
+    if (!result.ok) {
+      // Certains modèles ne savent pas appeler d’outil : on repasse en
+      // discussion simple plutôt que de renvoyer une erreur au client.
+      if (toolMode && result.status === 400) {
+        toolMode = false;
+        continue;
+      }
+      return groqFailure(result);
+    }
+
+    const choice = result.data?.choices?.[0]?.message;
+    const calls = Array.isArray(choice?.tool_calls) ? choice.tool_calls : [];
+    if (calls.length === 0) {
+      text = typeof choice?.content === 'string' ? choice.content.trim() : '';
+      break;
+    }
+
+    groqMessages.push({
+      role: 'assistant',
+      content: typeof choice?.content === 'string' ? choice.content : '',
+      tool_calls: calls,
+    });
+
+    for (const call of calls) {
+      const name = call?.function?.name || '';
+      let args = {};
+      try {
+        args = JSON.parse(call?.function?.arguments || '{}');
+      } catch (_) {
+        args = {};
+      }
+      let outcome;
+      try {
+        outcome = ghReady
+          ? await runGithubTool(env, name, args)
+          : {
+              ok: false,
+              summary: 'GitHub non connecté',
+              result: {
+                error:
+                  'Le relais n’a pas de jeton GitHub : ajoute le secret GITHUB_TOKEN pour autoriser les actions.',
+              },
+            };
+      } catch (error) {
+        outcome = {
+          ok: false,
+          summary: `${name} a échoué`,
+          result: { error: String(error?.message || error) },
+        };
+      }
+      actions.push({ tool: name, summary: outcome.summary, ok: outcome.ok });
+      groqMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: clip(JSON.stringify(outcome.result ?? {}), 8000),
+      });
+    }
+
+    if (step === MAX_TOOL_STEPS - 1) {
+      groqMessages.push({
+        role: 'system',
+        content: 'Tu as atteint le nombre maximal d’actions pour ce message. Résume ce qui a été fait et ce qui reste à faire, sans appeler d’autre outil.',
+      });
+    }
   }
 
-  if (upstream.status === 401 || upstream.status === 403) {
-    console.error('Clé Groq refusée', upstream.status);
-    return fail(503, 'not_configured', 'La clé de l’IA est invalide.');
-  }
-  if (upstream.status === 429) {
-    return fail(429, 'upstream_limit', 'L’IA est très sollicitée, réessaie dans un instant.');
-  }
-  if (!upstream.ok) {
-    console.error('Groq a répondu', upstream.status);
-    return fail(502, 'upstream', 'L’IA n’a pas pu répondre.');
+  if (!text) {
+    // Filet de sécurité : une dernière passe sans outils pour obtenir un texte.
+    const last = await groqCall(env, {
+      model,
+      messages: groqMessages,
+      max_completion_tokens: MAX_COMPLETION_TOKENS,
+      temperature: 0.7,
+    });
+    if (!last.ok) return groqFailure(last);
+    text = typeof last.data?.choices?.[0]?.message?.content === 'string'
+      ? last.data.choices[0].message.content.trim()
+      : '';
   }
 
-  const data = await upstream.json().catch(() => null);
-  const text = data?.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || text.trim().length === 0) {
+  if (!text) {
     return fail(502, 'empty', 'Réponse vide de l’IA, réessaie.');
   }
 
@@ -635,7 +1375,7 @@ async function relay(request, env) {
     DEVICE_DAILY_LIMIT > 0
       ? Math.max(0, DEVICE_DAILY_LIMIT - (used + 1))
       : null;
-  return json({ reply: text.trim(), model, remaining });
+  return json({ reply: text, model, remaining, actions });
 }
 
 async function listConversationsRoute(request, env) {
@@ -762,11 +1502,15 @@ export default {
     }
 
     if (url.pathname === '/') {
-      return statusPage(Boolean(env.GROQ_API_KEY));
+      return statusPage(Boolean(env.GROQ_API_KEY), githubConfigured(env));
     }
 
     if (url.pathname === '/health') {
-      return json({ ok: true, configured: Boolean(env.GROQ_API_KEY) });
+      return json({
+        ok: true,
+        configured: Boolean(env.GROQ_API_KEY),
+        github: githubConfigured(env),
+      });
     }
 
     if (url.pathname === '/auth/register') {

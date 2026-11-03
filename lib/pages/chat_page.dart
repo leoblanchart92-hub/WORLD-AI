@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
 
 import '../ai/ai_client.dart';
 import '../auth/auth_client.dart';
@@ -38,6 +42,20 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
+class _ChatAttachment {
+  const _ChatAttachment({
+    required this.name,
+    required this.mime,
+    required this.bytes,
+  });
+
+  final String name;
+  final String mime;
+  final Uint8List bytes;
+
+  String get dataUrl => 'data:$mime;base64,${base64Encode(bytes)}';
+}
+
 class _ChatPageState extends State<ChatPage> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
@@ -46,6 +64,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _canSend = false;
   http.Client? _abortClient;
   ConversationStore? _store;
+  final List<_ChatAttachment> _attachments = [];
 
   @override
   void initState() {
@@ -72,7 +91,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _handleInputChanged() {
-    final canSend = _input.text.trim().isNotEmpty && !_sending;
+    final canSend = (_input.text.trim().isNotEmpty || _attachments.isNotEmpty) && !_sending;
     if (canSend != _canSend) setState(() => _canSend = canSend);
   }
 
@@ -108,29 +127,44 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
+    if ((text.isEmpty && _attachments.isEmpty) || _sending) return;
     final now = DateTime.now();
-    final userMsg = ChatMessage(id: _newId(), role: 'user', content: text, createdAt: now);
+    final userMsg = ChatMessage(id: _newId(), role: 'user', content: text.isEmpty ? '(pièce jointe)' : text, createdAt: now);
     final messages = List<ChatMessage>.from(widget.conversation.messages)..add(userMsg);
+    final attachments = List<_ChatAttachment>.from(_attachments);
     setState(() {
       _input.clear();
+      _attachments.clear();
       _canSend = false;
       _failure = null;
       _sending = true;
     });
     _updateConversation(messages);
     _scrollToEnd();
-    await _request(messages);
+    await _request(messages, attachments: attachments);
   }
 
-  Future<void> _request(List<ChatMessage> messages) async {
+  Future<void> _request(List<ChatMessage> messages, {List<_ChatAttachment> attachments = const []}) async {
     _abortClient?.close();
     final client = http.Client();
     _abortClient = client;
     try {
       final history = <AiMessage>[];
-      for (final m in messages) {
-        if (m.role == 'user') history.add(AiMessage.user(m.content));
+      for (var i = 0; i < messages.length; i++) {
+        final m = messages[i];
+        if (m.role == 'user') {
+          if (i == messages.length - 1 && attachments.isNotEmpty) {
+            history.add(AiMessage.user(
+              m.content,
+              attachments: [
+                for (final a in attachments)
+                  AiAttachment(name: a.name, mime: a.mime, data: a.dataUrl),
+              ],
+            ));
+          } else {
+            history.add(AiMessage.user(m.content));
+          }
+        }
         if (m.role == 'assistant') history.add(AiMessage.assistant(m.content));
       }
       final reply = await (widget.ai as AiClient).send(
@@ -144,6 +178,10 @@ class _ChatPageState extends State<ChatPage> {
         role: 'assistant',
         content: reply.text,
         createdAt: DateTime.now(),
+        actions: [
+          for (final a in reply.actions)
+            ChatAction(tool: a.tool, summary: a.summary, ok: a.ok),
+        ],
       );
       final updated = List<ChatMessage>.from(messages)..add(assistantMsg);
       setState(() {
@@ -279,6 +317,88 @@ class _ChatPageState extends State<ChatPage> {
     return '$h:$m';
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final xfile = await picker.pickImage(source: source, imageQuality: 85, maxWidth: 2048);
+      if (xfile == null) return;
+      final bytes = await xfile.readAsBytes();
+      final mime = lookupMimeType(xfile.name, headerBytes: bytes) ?? 'image/jpeg';
+      setState(() {
+        _attachments.add(_ChatAttachment(name: xfile.name, mime: mime, bytes: bytes));
+        _handleInputChanged();
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pickFiles() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'md', 'json', 'csv', 'xml', 'html', 'pdf', 'js', 'ts', 'py', 'dart', 'log'],
+        withData: true,
+      );
+      if (result == null) return;
+      for (final f in result.files) {
+        if (f.bytes == null) continue;
+        if (f.bytes!.length > 5 * 1024 * 1024) continue;
+        final mime = lookupMimeType(f.name, headerBytes: f.bytes) ?? 'text/plain';
+        setState(() {
+          _attachments.add(_ChatAttachment(name: f.name, mime: mime, bytes: f.bytes!));
+        });
+      }
+      _handleInputChanged();
+    } catch (_) {}
+  }
+
+  void _showAttachSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: AppTheme.accent),
+              title: const Text('Galerie'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded, color: AppTheme.accent),
+              title: const Text('Appareil photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file_rounded, color: AppTheme.accent),
+              title: const Text('Fichiers'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickFiles();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _removeAttachment(int index) {
+    setState(() {
+      _attachments.removeAt(index);
+      _handleInputChanged();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = widget.conversation.messages;
@@ -322,6 +442,9 @@ class _ChatPageState extends State<ChatPage> {
           onPickModel: widget.onModelChanged == null ? null : _pickModel,
           onNewConversation: widget.onNewConversation,
           onClearConversation: widget.onClearConversation,
+          onAttach: _showAttachSheet,
+          attachments: _attachments,
+          onRemoveAttachment: _removeAttachment,
         ),
       ],
     );
@@ -408,13 +531,48 @@ class _MessageRow extends StatelessWidget {
             bottomRight: Radius.circular(fromUser ? 6 : 18),
           ),
         ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            fontSize: 14,
-            height: 1.4,
-            color: fromUser ? Colors.white : AppTheme.textSoft,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.content,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: fromUser ? Colors.white : AppTheme.textSoft,
+              ),
+            ),
+            if (message.actions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              for (final action in message.actions)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        action.ok
+                            ? Icons.check_circle_rounded
+                            : Icons.error_outline_rounded,
+                        size: 13,
+                        color: action.ok ? AppTheme.accent : const Color(0xFFF3A5B4),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          action.summary,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            height: 1.3,
+                            color: AppTheme.muted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ],
         ),
       ),
     );
@@ -785,6 +943,9 @@ class _Composer extends StatelessWidget {
     required this.onPickModel,
     required this.onNewConversation,
     required this.onClearConversation,
+    required this.onAttach,
+    required this.attachments,
+    required this.onRemoveAttachment,
   });
 
   final TextEditingController controller;
@@ -796,6 +957,9 @@ class _Composer extends StatelessWidget {
   final VoidCallback? onPickModel;
   final VoidCallback onNewConversation;
   final VoidCallback onClearConversation;
+  final VoidCallback onAttach;
+  final List<_ChatAttachment> attachments;
+  final void Function(int) onRemoveAttachment;
 
   @override
   Widget build(BuildContext context) {
@@ -818,11 +982,37 @@ class _Composer extends StatelessWidget {
             children: [
               _AiBadge(model: model, onTap: onPickModel),
               const SizedBox(height: 10),
+              if (attachments.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < attachments.length; i++)
+                          Padding(
+                            padding: EdgeInsets.only(right: i == attachments.length - 1 ? 0 : 8),
+                            child: _AttachmentChip(
+                              attachment: attachments[i],
+                              onRemove: () => onRemoveAttachment(i),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   IconButton(
-                    onPressed: onNewConversation,
+                    onPressed: onAttach,
                     icon: const Icon(Icons.add_rounded),
+                    tooltip: 'Joindre',
+                    color: AppTheme.muted,
+                  ),
+                  IconButton(
+                    onPressed: onNewConversation,
+                    icon: const Icon(Icons.edit_note_rounded),
                     tooltip: 'Nouvelle discussion',
                     color: AppTheme.muted,
                   ),
@@ -879,6 +1069,80 @@ class _Composer extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AttachmentChip extends StatelessWidget {
+  const _AttachmentChip({required this.attachment, required this.onRemove});
+
+  final _ChatAttachment attachment;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final isImage = attachment.mime.startsWith('image/');
+    return Container(
+      height: 64,
+      constraints: const BoxConstraints(maxWidth: 220),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.outline),
+      ),
+      child: Stack(
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(11)),
+                child: isImage
+                    ? Image.memory(
+                        attachment.bytes,
+                        width: 64,
+                        height: 64,
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        width: 64,
+                        height: 64,
+                        color: AppTheme.surface,
+                        child: const Icon(Icons.insert_drive_file_rounded, color: AppTheme.muted),
+                      ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 130),
+                  child: Text(
+                    attachment.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11.5, color: AppTheme.text),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Positioned(
+            top: 2,
+            right: 2,
+            child: InkWell(
+              onTap: onRemove,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: const BoxDecoration(
+                  color: AppTheme.background,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close_rounded, size: 14, color: AppTheme.muted),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
