@@ -40,6 +40,11 @@ const MAX_TOOL_RESULT_CHARS = 12000;
 const MAX_WRITE_FILES = 12;
 const MAX_FILE_CONTENT_CHARS = 200000;
 
+// Sites de test publiés par l’IA : une page HTML autonome par site.
+const MAX_SITES_PER_USER = 50;
+const MAX_SITE_HTML_CHARS = 300000;
+const SITE_SLUG_RE = /^[a-f0-9]{8,64}$/;
+
 const MAX_MESSAGES = 24;
 const MAX_CONTENT_CHARS = 4000;
 const MAX_ATTACHMENT_CHARS = 8000;
@@ -149,6 +154,18 @@ async function ensureSchema(db) {
         'expires_at INTEGER NOT NULL, ' +
         'created_at INTEGER NOT NULL)',
     ),
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS sites (' +
+        'slug TEXT PRIMARY KEY, ' +
+        'user_id TEXT NOT NULL, ' +
+        'title TEXT NOT NULL DEFAULT "", ' +
+        'html TEXT NOT NULL, ' +
+        'created_at INTEGER NOT NULL, ' +
+        'updated_at INTEGER NOT NULL)',
+    ),
+    db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_sites_user ON sites(user_id, updated_at DESC)',
+    ),
   ]);
   schemaReady = true;
 }
@@ -211,6 +228,8 @@ function statusPage(configured, github = false) {
       '<dt>Comptes</dt><dd><code>POST /auth/register</code>, ' +
       '<code>POST /auth/login</code>, <code>GET /auth/me</code>, ' +
       '<code>POST /auth/logout</code></dd>' +
+      '<dt>Sites de test</dt><dd><code>GET /s/&lt;slug&gt;</code>, ' +
+      '<code>GET /sites</code>, <code>POST /sites</code></dd>' +
       '<dt>Modèles</dt><dd>openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b</dd>' +
       '<dt>Quota</dt><dd>Aucune limite de messages</dd>' +
       '<dt>État</dt><dd><code>/health</code></dd></dl>' +
@@ -590,7 +609,7 @@ async function logout(request, env) {
 
 /* ---------------------------------------------------------------- GitHub */
 
-function tool(name, description, properties = {}, required = []) {
+function functionTool(name, description, properties, required) {
   return {
     type: 'function',
     function: {
@@ -598,15 +617,29 @@ function tool(name, description, properties = {}, required = []) {
       description,
       parameters: {
         type: 'object',
-        properties: {
-          repo: S('Dépôt visé, « propriétaire/nom ». Omets-le pour utiliser le dépôt courant.'),
-          ...properties,
-        },
+        properties,
         required,
         additionalProperties: false,
       },
     },
   };
+}
+
+function tool(name, description, properties = {}, required = []) {
+  return functionTool(
+    name,
+    description,
+    {
+      repo: S('Dépôt visé, « propriétaire/nom ». Omets-le pour utiliser le dépôt courant.'),
+      ...properties,
+    },
+    required,
+  );
+}
+
+/** Outil qui ne parle pas à GitHub : pas d’argument « repo » implicite. */
+function siteTool(name, description, properties = {}, required = []) {
+  return functionTool(name, description, properties, required);
 }
 
 const S = (description) => ({ type: 'string', description });
@@ -708,6 +741,35 @@ const GITHUB_TOOLS = [
     workflow: S('Nom du fichier de workflow, par exemple build-apk.yml.'),
     ref: S('Branche (défaut : branche par défaut).'),
   }, ['workflow']),
+];
+
+const SITE_TOOLS = [
+  siteTool(
+    'site_create',
+    'Publie un site web de test et renvoie son adresse publique. Fournis une page HTML complète et autonome : styles et scripts inclus dans le fichier.',
+    {
+      title: S('Titre lisible du site.'),
+      html: S('Contenu complet du fichier HTML : doctype, head, body et styles inclus.'),
+    },
+    ['html'],
+  ),
+  siteTool(
+    'site_update',
+    'Remplace le contenu d’un site déjà publié. L’adresse publique ne change pas.',
+    {
+      slug: S('Identifiant du site, renvoyé par site_create ou site_list.'),
+      title: S('Nouveau titre (facultatif).'),
+      html: S('Nouveau contenu HTML complet de la page.'),
+    },
+    ['slug', 'html'],
+  ),
+  siteTool('site_list', 'Liste les sites publiés par cette personne avec leur adresse.', {}),
+  siteTool(
+    'site_delete',
+    'Supprime définitivement un site publié : son adresse cesse de fonctionner.',
+    { slug: S('Identifiant du site à supprimer.') },
+    ['slug'],
+  ),
 ];
 
 function githubConfigured(ctx) {
@@ -1299,6 +1361,19 @@ async function relay(request, env) {
   // invité ne peut utiliser que le jeton du relais s'il en existe un.
   const ghCtx = await githubContext(request, env);
   const ghReady = githubConfigured(ghCtx);
+  // Les sites appartiennent à un compte WORLD-AI : un invité peut discuter,
+  // mais il n’a rien à publier ni à retrouver.
+  const viewer = await currentUser(request, env.DB);
+  const sitesReady = Boolean(viewer);
+  const tools = [...(ghReady ? GITHUB_TOOLS : []), ...(sitesReady ? SITE_TOOLS : [])];
+
+  const sitePrompt = sitesReady
+    ? ' Tu peux aussi créer un site web de test : écris une page HTML complète et autonome ' +
+      '(styles et scripts dans le fichier), appelle site_create, puis donne l’adresse publique obtenue. ' +
+      'site_update remplace le contenu d’un site existant, site_list retrouve les sites publiés ' +
+      'et site_delete les supprime. Ces adresses sont publiques : n’y mets aucune donnée sensible.'
+    : '';
+
   const systemPrompt = ghReady
     ? `${SYSTEM_PROMPT} Tu es connecté au compte GitHub ${ghCtx.GITHUB_LOGIN || 'demandé'} et tu peux agir sur ses dépôts grâce aux outils fournis` +
       (ghCtx.GITHUB_REPO
@@ -1307,8 +1382,41 @@ async function relay(request, env) {
       'Lis le code avant de le modifier, écris des fichiers complets, et crée une branche puis une pull request ' +
       'plutôt que de pousser directement sur la branche par défaut quand le changement est important. ' +
       'Annonce brièvement ce que tu fais, fais-le, puis résume le résultat. ' +
-      'N’invente jamais une action : si un outil échoue, dis-le avec l’erreur réelle.'
-    : `${SYSTEM_PROMPT} Tu n’as aucun accès à GitHub : ne prétends jamais avoir lu ou modifié un dépôt. Tu peux proposer de connecter un compte GitHub depuis l’application.`;
+      'N’invente jamais une action : si un outil échoue, dis-le avec l’erreur réelle.' +
+      sitePrompt
+    : `${SYSTEM_PROMPT} Tu n’as aucun accès à GitHub : ne prétends jamais avoir lu ou modifié un dépôt. Tu peux proposer de connecter un compte GitHub depuis les paramètres de l’application.` +
+      sitePrompt;
+
+  const callTool = async (name, args) => {
+    if (name.startsWith('site_')) {
+      if (!sitesReady) {
+        return {
+          ok: false,
+          summary: 'Compte requis',
+          result: {
+            error:
+              'Publier un site demande un compte WORLD-AI : connecte-toi depuis les paramètres de l’application.',
+          },
+        };
+      }
+      return runSiteTool(
+        { env, userId: viewer.id, origin: new URL(request.url).origin },
+        name,
+        args,
+      );
+    }
+    if (!ghReady) {
+      return {
+        ok: false,
+        summary: 'GitHub non connecté',
+        result: {
+          error:
+            'Aucun compte GitHub connecté : ouvre Paramètres → GitHub dans l’application pour lier ton compte.',
+        },
+      };
+    }
+    return runGithubTool(ghCtx, name, args);
+  };
 
   const groqMessages = [{ role: 'system', content: systemPrompt }];
   for (let i = 0; i < messages.length; i += 1) {
@@ -1359,7 +1467,7 @@ async function relay(request, env) {
     }
   }
 
-  let toolMode = ghReady;
+  let toolMode = tools.length > 0;
   const actions = [];
   let text = '';
 
@@ -1369,7 +1477,7 @@ async function relay(request, env) {
       messages: groqMessages,
       max_completion_tokens: MAX_COMPLETION_TOKENS,
       temperature: 0.7,
-      ...(toolMode ? { tools: GITHUB_TOOLS, tool_choice: 'auto' } : {}),
+      ...(toolMode ? { tools, tool_choice: 'auto' } : {}),
     });
     if (!result.ok) {
       // Certains modèles ne savent pas appeler d’outil : on repasse en
@@ -1404,16 +1512,7 @@ async function relay(request, env) {
       }
       let outcome;
       try {
-        outcome = ghReady
-          ? await runGithubTool(ghCtx, name, args)
-          : {
-              ok: false,
-              summary: 'GitHub non connecté',
-              result: {
-                error:
-                  'Aucun compte GitHub connecté : ouvre l’écran GitHub de l’application pour lier ton compte.',
-              },
-            };
+        outcome = await callTool(name, args);
       } catch (error) {
         outcome = {
           ok: false,
@@ -1864,6 +1963,231 @@ async function githubDisconnectRoute(request, env) {
   return json({ ok: true });
 }
 
+/* --------------------------------------------------------- Sites de test */
+// L’IA publie une page HTML autonome par site, servie publiquement sous
+// /s/<slug>. Le slug est aléatoire donc difficile à deviner, et le rendu est
+// isolé du relais par une politique sandbox : les scripts de la page tournent
+// dans une origine unique, sans accès aux données ni aux sessions.
+
+function siteUrl(origin, slug) {
+  return `${origin}/s/${slug}`;
+}
+
+function siteMissingPage() {
+  return new Response(
+    '<!doctype html><html lang="fr"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>Site introuvable</title><style>' +
+      'body{margin:0;min-height:100vh;display:flex;align-items:center;' +
+      'justify-content:center;background:#0b0912;color:#e9e6f5;' +
+      'font:15px/1.6 system-ui,sans-serif;padding:24px;text-align:center}' +
+      'p{color:#a9a4c0}</style></head><body><main>' +
+      '<h1>Site introuvable</h1>' +
+      '<p>Cette adresse ne correspond à aucun site publié.</p>' +
+      '</main></body></html>',
+    {
+      status: 404,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    },
+  );
+}
+
+async function publicSiteRoute(env, slug) {
+  if (!env.DB) return siteMissingPage();
+  await ensureSchema(env.DB);
+  const row = await env.DB.prepare('SELECT html FROM sites WHERE slug = ?')
+    .bind(slug)
+    .first();
+  if (!row || typeof row.html !== 'string') return siteMissingPage();
+  return new Response(row.html, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=60',
+      'content-security-policy': 'sandbox allow-scripts allow-forms allow-popups allow-modals',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    },
+  });
+}
+
+function readSiteHtml(payload) {
+  const html = typeof payload?.html === 'string' ? payload.html : '';
+  if (!html.trim()) return { error: 'Le contenu HTML du site est vide.' };
+  if (html.length > MAX_SITE_HTML_CHARS) {
+    return { error: 'Page trop lourde : 300 000 caractères maximum.' };
+  }
+  return { html };
+}
+
+function readSiteTitle(payload, fallback = '') {
+  const raw = typeof payload?.title === 'string' ? payload.title.trim() : '';
+  return (raw || fallback).slice(0, 120);
+}
+
+async function countSites(env, userId) {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM sites WHERE user_id = ?')
+    .bind(userId)
+    .first();
+  return Number(row?.total) || 0;
+}
+
+async function createSite(env, userId, origin, payload) {
+  const read = readSiteHtml(payload);
+  if (read.error) return read;
+  if ((await countSites(env, userId)) >= MAX_SITES_PER_USER) {
+    return {
+      error: `Limite de ${MAX_SITES_PER_USER} sites atteinte : supprime un site avant d’en créer un autre.`,
+    };
+  }
+  const slug = randomHex(9);
+  const title = readSiteTitle(payload);
+  const now = Date.now();
+  await env.DB.prepare(
+    'INSERT INTO sites (slug, user_id, title, html, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  )
+    .bind(slug, userId, title, read.html, now, now)
+    .run();
+  return { slug, title, url: siteUrl(origin, slug), updatedAt: now };
+}
+
+async function updateSite(env, userId, slug, payload) {
+  const read = readSiteHtml(payload);
+  if (read.error) return read;
+  const row = await env.DB.prepare('SELECT title FROM sites WHERE slug = ? AND user_id = ?')
+    .bind(slug, userId)
+    .first();
+  if (!row) return { error: 'Ce site n’existe pas, ou il ne t’appartient pas.' };
+  const title = readSiteTitle(payload, row.title || '');
+  await env.DB.prepare(
+    'UPDATE sites SET title = ?, html = ?, updated_at = ? WHERE slug = ? AND user_id = ?',
+  )
+    .bind(title, read.html, Date.now(), slug, userId)
+    .run();
+  return { slug, title };
+}
+
+async function deleteSite(env, userId, slug) {
+  const row = await env.DB.prepare('SELECT title FROM sites WHERE slug = ? AND user_id = ?')
+    .bind(slug, userId)
+    .first();
+  if (!row) return { error: 'Ce site n’existe pas, ou il ne t’appartient pas.' };
+  await env.DB.prepare('DELETE FROM sites WHERE slug = ? AND user_id = ?')
+    .bind(slug, userId)
+    .run();
+  return { slug, title: row.title || '' };
+}
+
+async function listSites(env, userId, origin) {
+  const { results } = await env.DB.prepare(
+    'SELECT slug, title, updated_at FROM sites WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100',
+  )
+    .bind(userId)
+    .all();
+  return (Array.isArray(results) ? results : []).map((row) => ({
+    slug: row.slug,
+    title: row.title || '',
+    url: siteUrl(origin, row.slug),
+    updatedAt: row.updated_at,
+  }));
+}
+
+/** Exécute un outil de site et renvoie { result, summary, ok }. */
+async function runSiteTool(ctx, name, args) {
+  const a = args && typeof args === 'object' ? args : {};
+  const { env, userId, origin } = ctx;
+
+  if (name === 'site_create') {
+    const site = await createSite(env, userId, origin, a);
+    if (site.error) return { ok: false, summary: 'Création refusée', result: { error: site.error } };
+    return {
+      ok: true,
+      summary: `Site « ${site.title || site.slug} » publié`,
+      result: {
+        slug: site.slug,
+        title: site.title,
+        url: site.url,
+        note: 'Donne cette adresse à la personne : elle s’ouvre dans un navigateur.',
+      },
+    };
+  }
+
+  if (name === 'site_update') {
+    const slug = typeof a.slug === 'string' ? a.slug.trim() : '';
+    if (!slug) {
+      return { ok: false, summary: 'Site non précisé', result: { error: 'Indique le « slug » du site à modifier.' } };
+    }
+    const site = await updateSite(env, userId, slug, a);
+    if (site.error) return { ok: false, summary: 'Mise à jour refusée', result: { error: site.error } };
+    return {
+      ok: true,
+      summary: `Site « ${site.title || slug} » mis à jour`,
+      result: { slug, title: site.title, url: siteUrl(origin, slug) },
+    };
+  }
+
+  if (name === 'site_list') {
+    const sites = await listSites(env, userId, origin);
+    return {
+      ok: true,
+      summary: `${sites.length} site(s) publié(s)`,
+      result: { sites },
+    };
+  }
+
+  if (name === 'site_delete') {
+    const slug = typeof a.slug === 'string' ? a.slug.trim() : '';
+    if (!slug) {
+      return { ok: false, summary: 'Site non précisé', result: { error: 'Indique le « slug » du site à supprimer.' } };
+    }
+    const site = await deleteSite(env, userId, slug);
+    if (site.error) return { ok: false, summary: 'Suppression refusée', result: { error: site.error } };
+    return { ok: true, summary: `Site « ${site.title || slug} » supprimé`, result: { slug } };
+  }
+
+  return { ok: false, summary: `Outil inconnu : ${name}`, result: { error: 'Outil inconnu.' } };
+}
+
+async function listSitesRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const sites = await listSites(env, user.id, new URL(request.url).origin);
+  return json({ ok: true, sites });
+}
+
+async function createSiteRoute(request, env) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const payload = await request.json().catch(() => null);
+  const site = await createSite(env, user.id, new URL(request.url).origin, payload);
+  if (site.error) return fail(400, 'bad_request', site.error);
+  return json({ ok: true, site });
+}
+
+async function updateSiteRoute(request, env, slug) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const payload = await request.json().catch(() => null);
+  const site = await updateSite(env, user.id, slug, payload);
+  if (site.error) return fail(404, 'not_found', site.error);
+  return json({ ok: true, slug: site.slug, title: site.title, url: siteUrl(new URL(request.url).origin, slug) });
+}
+
+async function deleteSiteRoute(request, env, slug) {
+  if (!env.DB) return fail(503, 'not_ready', 'Le service de comptes n’est pas prêt.');
+  const user = await signedIn(request, env);
+  if (!user) return fail(401, 'unauthorized', 'Connexion requise.');
+  const site = await deleteSite(env, user.id, slug);
+  if (site.error) return fail(404, 'not_found', site.error);
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -1882,6 +2206,7 @@ export default {
         configured: Boolean(env.GROQ_API_KEY),
         github: githubConfigured(env) || githubOauthConfigured(env),
         githubOauth: githubOauthConfigured(env),
+        sites: true,
       });
     }
 
@@ -1910,6 +2235,28 @@ export default {
     if (url.pathname === '/github/repos') {
       if (request.method !== 'GET') return fail(405, 'method', 'Utilise GET.');
       return githubReposRoute(request, env);
+    }
+
+    if (url.pathname.startsWith('/s/')) {
+      if (request.method !== 'GET') return fail(405, 'method', 'Utilise GET.');
+      const slug = url.pathname.slice(3).replace(/\/+$/, '').trim();
+      if (!SITE_SLUG_RE.test(slug)) return siteMissingPage();
+      return publicSiteRoute(env, slug);
+    }
+
+    if (url.pathname === '/sites') {
+      if (request.method === 'GET') return listSitesRoute(request, env);
+      if (request.method === 'POST') return createSiteRoute(request, env);
+      return fail(405, 'method', 'Utilise GET ou POST.');
+    }
+
+    if (url.pathname.startsWith('/sites/')) {
+      const slug = (url.pathname.split('/').filter(Boolean)[1] || '').trim();
+      if (!SITE_SLUG_RE.test(slug)) return fail(404, 'not_found', 'Site introuvable.');
+      if (request.method === 'PATCH' || request.method === 'PUT')
+        return updateSiteRoute(request, env, slug);
+      if (request.method === 'DELETE') return deleteSiteRoute(request, env, slug);
+      return fail(405, 'method', 'Utilise PATCH ou DELETE.');
     }
 
     if (url.pathname === '/auth/register') {

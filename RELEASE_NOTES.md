@@ -1,3 +1,3 @@
-# v2.3.0
+# v2.4.0
 
-Connecte ton propre compte GitHub depuis le menu : l'IA agit sur tes dépôts (lire le code, commiter, ouvrir une pull request, lancer un workflow), et tu peux joindre des images ou des fichiers texte à tes messages.
+L'IA peut désormais créer des sites de test : elle écrit une page HTML complète et la publie à une adresse publique, que tu retrouves dans Paramètres → Sites de test. La connexion GitHub y a aussi déménagé, avec le choix du dépôt courant.

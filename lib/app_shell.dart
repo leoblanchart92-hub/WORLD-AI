@@ -9,9 +9,11 @@ import 'pages/account_page.dart';
 import 'pages/chat_page.dart';
 import 'pages/github_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/sites_page.dart';
 import 'pages/updates_page.dart';
 import 'pages/whats_new_page.dart';
 import 'settings_store.dart';
+import 'sites/sites_client.dart';
 import 'theme/app_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_ui.dart';
@@ -27,6 +29,7 @@ class AppShell extends StatefulWidget {
     this.aiService,
     this.authService,
     this.githubService,
+    this.sitesService,
   });
 
   final UpdateController controller;
@@ -35,6 +38,7 @@ class AppShell extends StatefulWidget {
   final AiService? aiService;
   final AuthService? authService;
   final GithubService? githubService;
+  final SitesService? sitesService;
   final SettingsStore? settingsStore;
   final Future<String> Function()? loadAppIcon;
   final Future<void> Function(String)? onAppIconChanged;
@@ -55,6 +59,7 @@ class _AppShellState extends State<AppShell> {
 
   late final AuthService _auth = widget.authService ?? AuthClient();
   late final GithubService _github = widget.githubService ?? GithubClient();
+  late final SitesService _sites = widget.sitesService ?? SitesClient();
 
   StoredSession? _session;
 
@@ -260,16 +265,23 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _openGithub() async {
-    final navigator = Navigator.of(context);
-    await navigator.maybePop();
     if (!mounted) return;
-    await navigator.push(
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => GithubPage(
           github: _github,
           session: _session,
           onOpenAccount: _openAccount,
         ),
+      ),
+    );
+  }
+
+  Future<void> _openSites() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SitesPage(sites: _sites, session: _session),
       ),
     );
   }
@@ -345,6 +357,8 @@ class _AppShellState extends State<AppShell> {
               setState(() => _checkOnLaunch = value),
           loadAppIcon: widget.loadAppIcon ?? _settings.loadAppIcon,
           onAppIconChanged: widget.onAppIconChanged ?? _saveAppIcon,
+          onOpenGithub: _openGithub,
+          onOpenSites: _openSites,
         ),
       ),
     );
@@ -407,7 +421,6 @@ class _AppShellState extends State<AppShell> {
         onUpdate: _updateFromDrawer,
         onSettings: _openSettings,
         onAccount: _openAccount,
-        onGithub: _openGithub,
         onNewConversation: _newConversation,
         onSelectConversation: _selectConversation,
         onDeleteConversation: _deleteConversation,
@@ -450,7 +463,6 @@ class _AppDrawer extends StatelessWidget {
     required this.onUpdate,
     required this.onSettings,
     required this.onAccount,
-    required this.onGithub,
     required this.onNewConversation,
     required this.onSelectConversation,
     required this.onDeleteConversation,
@@ -465,7 +477,6 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onUpdate;
   final VoidCallback onSettings;
   final VoidCallback onAccount;
-  final VoidCallback onGithub;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onSelectConversation;
   final ValueChanged<String> onDeleteConversation;
@@ -616,12 +627,6 @@ class _AppDrawer extends StatelessWidget {
                   subtitle: _updateSubtitle,
                   highlighted: controller.phase == UpdatePhase.available,
                   onTap: onUpdate,
-                ),
-                _FooterTile(
-                  icon: Icons.hub_outlined,
-                  label: 'GitHub',
-                  subtitle: 'Connecter ton compte et tes dépôts',
-                  onTap: onGithub,
                 ),
                 _FooterTile(
                   icon: Icons.settings_outlined,

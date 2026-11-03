@@ -16,6 +16,8 @@ class SettingsPage extends StatefulWidget {
     required this.onCheckOnLaunchChanged,
     required this.loadAppIcon,
     required this.onAppIconChanged,
+    required this.onOpenGithub,
+    required this.onOpenSites,
   });
 
   final UpdateController controller;
@@ -24,6 +26,12 @@ class SettingsPage extends StatefulWidget {
   final ValueChanged<bool> onCheckOnLaunchChanged;
   final Future<String> Function() loadAppIcon;
   final Future<void> Function(String) onAppIconChanged;
+
+  /// Ouvre la connexion GitHub du compte.
+  final VoidCallback onOpenGithub;
+
+  /// Ouvre la liste des sites de test publiés par l’IA.
+  final VoidCallback onOpenSites;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -123,6 +131,67 @@ class _SettingsPageState extends State<SettingsPage> {
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const WhatsNewPage()),
                 ),
+              ),
+            ),
+            const SizedBox(height: 22),
+            const _SectionTitle('Compte et contenu'),
+            Material(
+              color: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: const BorderSide(color: AppTheme.outline),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(
+                      Icons.hub_outlined,
+                      color: AppTheme.accent,
+                    ),
+                    title: const Text(
+                      'GitHub',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.text,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Connecte ton compte et le dépôt utilisé par l’IA',
+                      style: TextStyle(fontSize: 12, color: AppTheme.muted),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppTheme.muted,
+                    ),
+                    onTap: widget.onOpenGithub,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.public_rounded,
+                      color: AppTheme.accent,
+                    ),
+                    title: const Text(
+                      'Sites de test',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.text,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Pages créées par l’IA, à ouvrir ou supprimer',
+                      style: TextStyle(fontSize: 12, color: AppTheme.muted),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppTheme.muted,
+                    ),
+                    onTap: widget.onOpenSites,
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 22),

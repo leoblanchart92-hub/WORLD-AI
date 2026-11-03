@@ -27,12 +27,14 @@ function fakeDb() {
   const users = new Map();
   const sessions = new Map();
   const attempts = new Map();
+  const sites = new Map();
 
   return {
     rows,
     users,
     sessions,
     attempts,
+    sites,
     async batch(statements) {
       return Promise.all(statements.map((statement) => statement.run()));
     },
@@ -65,7 +67,30 @@ function fakeDb() {
           if (sql.startsWith('SELECT count, reset_at FROM auth_attempts')) {
             return attempts.get(statement.args[0]) ?? null;
           }
+          if (sql.startsWith('SELECT html FROM sites')) {
+            const site = sites.get(statement.args[0]);
+            return site ? { html: site.html } : null;
+          }
+          if (sql.startsWith('SELECT title FROM sites')) {
+            const site = sites.get(statement.args[0]);
+            if (!site || site.user_id !== statement.args[1]) return null;
+            return { title: site.title };
+          }
+          if (sql.startsWith('SELECT COUNT(*) AS total FROM sites')) {
+            const total = [...sites.values()].filter((s) => s.user_id === statement.args[0]).length;
+            return { total };
+          }
           return null;
+        },
+        async all() {
+          if (sql.startsWith('SELECT slug, title, updated_at FROM sites')) {
+            const results = [...sites.values()]
+              .filter((s) => s.user_id === statement.args[0])
+              .sort((a, b) => b.updated_at - a.updated_at)
+              .map((s) => ({ slug: s.slug, title: s.title, updated_at: s.updated_at }));
+            return { results };
+          }
+          return { results: [] };
         },
         async run() {
           if (sql.startsWith('INSERT INTO usage')) {
@@ -89,6 +114,28 @@ function fakeDb() {
             });
           } else if (sql.startsWith('DELETE FROM auth_attempts')) {
             attempts.delete(statement.args[0]);
+          } else if (sql.startsWith('INSERT INTO sites')) {
+            const [slug, userId, title, html, createdAt, updatedAt] = statement.args;
+            sites.set(slug, {
+              slug,
+              user_id: userId,
+              title,
+              html,
+              created_at: createdAt,
+              updated_at: updatedAt,
+            });
+          } else if (sql.startsWith('UPDATE sites')) {
+            const [title, html, updatedAt, slug, userId] = statement.args;
+            const site = sites.get(slug);
+            if (site && site.user_id === userId) {
+              site.title = title;
+              site.html = html;
+              site.updated_at = updatedAt;
+            }
+          } else if (sql.startsWith('DELETE FROM sites')) {
+            const [slug, userId] = statement.args;
+            const site = sites.get(slug);
+            if (site && site.user_id === userId) sites.delete(slug);
           }
           return { success: true };
         },
@@ -372,6 +419,150 @@ function authRequest(path, body, headers = {}) {
     groqCalls.push({ url, body: JSON.parse(init.body) });
     return groqReply();
   };
+}
+
+// 10. Sites de test : publication, lecture publique, propriété, suppression.
+{
+  const db = fakeDb();
+  const env = { DB: db };
+  const created = await worker.fetch(
+    authRequest('/auth/register', { email: 'site@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  const { token } = await created.json();
+  const auth = { authorization: `Bearer ${token}` };
+
+  const anon = await worker.fetch(authRequest('/sites', { html: '<h1>test</h1>' }), env);
+  check('site sans compte → 401', anon.status === 401);
+
+  const made = await worker.fetch(
+    authRequest('/sites', { title: 'Démo', html: '<!doctype html><h1>Salut</h1>' }, auth),
+    env,
+  );
+  const madeBody = await made.json();
+  check('création de site → 201/200', made.status === 200, `status=${made.status}`);
+  const slug = madeBody.site?.slug;
+  check('création → slug', typeof slug === 'string' && /^[a-f0-9]{18}$/.test(slug));
+  check(
+    'création → adresse publique',
+    madeBody.site?.url === `https://relay.test/s/${slug}`,
+    madeBody.site?.url,
+  );
+
+  const page = await worker.fetch(new Request(`https://relay.test/s/${slug}`), env);
+  const pageBody = await page.text();
+  check('page publique → 200', page.status === 200, `status=${page.status}`);
+  check('page publique → HTML servi', pageBody.includes('<h1>Salut</h1>'));
+  check(
+    'page publique → sandbox',
+    (page.headers.get('content-security-policy') || '').includes('sandbox'),
+  );
+  check(
+    'page publique → type HTML',
+    (page.headers.get('content-type') || '').startsWith('text/html'),
+  );
+
+  const unknown = await worker.fetch(new Request('https://relay.test/s/000000000000000000'), env);
+  check('site inconnu → 404', unknown.status === 404);
+  const invalid = await worker.fetch(new Request('https://relay.test/s/pas-un-slug'), env);
+  check('slug invalide → 404', invalid.status === 404);
+
+  const listed = await worker.fetch(authRequest('/sites', undefined, auth), env);
+  const listedBody = await listed.json();
+  check(
+    'liste des sites → 1 entrée',
+    listed.status === 200 && listedBody.sites?.length === 1,
+    `status=${listed.status}`,
+  );
+
+  const other = await worker.fetch(
+    authRequest('/auth/register', { email: 'autre@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  const otherToken = (await other.json()).token;
+  const foreignDelete = await worker.fetch(
+    new Request(`https://relay.test/sites/${slug}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${otherToken}` },
+    }),
+    env,
+  );
+  check('suppression par un autre compte → 404', foreignDelete.status === 404);
+  check('site toujours là', db.sites.size === 1);
+
+  const emptied = await worker.fetch(
+    authRequest('/sites', { title: '', html: '   ' }, auth),
+    env,
+  );
+  check('contenu vide → 400', emptied.status === 400);
+
+  const removed = await worker.fetch(
+    new Request(`https://relay.test/sites/${slug}`, { method: 'DELETE', headers: auth }),
+    env,
+  );
+  check('suppression par le propriétaire', removed.status === 200);
+  check('site retiré de la base', db.sites.size === 0);
+  const gone = await worker.fetch(new Request(`https://relay.test/s/${slug}`), env);
+  check('adresse supprimée → 404', gone.status === 404);
+}
+
+// 11. L’IA publie un site quand on lui demande.
+{
+  const db = fakeDb();
+  const env = { DB: db, GROQ_API_KEY: 'cle-de-test' };
+  const created = await worker.fetch(
+    authRequest('/auth/register', { email: 'outil@exemple.fr', password: 'motdepasse123' }),
+    env,
+  );
+  const { token } = await created.json();
+
+  let call = 0;
+  globalThis.fetch = async () => {
+    call += 1;
+    const message =
+      call === 1
+        ? {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'appel-1',
+                type: 'function',
+                function: {
+                  name: 'site_create',
+                  arguments: JSON.stringify({
+                    title: 'Page de test',
+                    html: '<!doctype html><h1>Page de test</h1>',
+                  }),
+                },
+              },
+            ],
+          }
+        : { role: 'assistant', content: 'Le site est publié.' };
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { choices: [{ message }] };
+      },
+    };
+  };
+
+  const answer = await worker.fetch(
+    chatRequest({ messages: [{ role: 'user', content: 'crée un site de test' }] }, {
+      authorization: `Bearer ${token}`,
+    }),
+    env,
+  );
+  const answerBody = await answer.json();
+  check(
+    'chat → outil site_create exécuté',
+    Array.isArray(answerBody.actions) &&
+      answerBody.actions.some((action) => action.tool === 'site_create' && action.ok),
+    JSON.stringify(answerBody.actions),
+  );
+  check('chat → site écrit en base', db.sites.size === 1);
+  check('chat → réponse finale', answerBody.reply === 'Le site est publié.');
 }
 
 globalThis.fetch = realFetch;

@@ -156,7 +156,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 2.1.0'), findsOneWidget);
+    expect(find.text('Version 2.4.0'), findsOneWidget);
   });
 
   testWidgets('ouvre les nouveautés depuis les paramètres', (tester) async {
@@ -176,7 +176,7 @@ void main() {
       find.text('Retrouve ici les principales améliorations de l’application.'),
       findsOneWidget,
     );
-    expect(find.text('Version 2.1.0'), findsOneWidget);
+    expect(find.text('Version 2.4.0'), findsOneWidget);
   });
 
   testWidgets('change et mémorise l’icône depuis les paramètres', (

@@ -8,6 +8,17 @@ class WhatsNewPage extends StatelessWidget {
 
   static const List<_ReleaseNotes> _releases = [
     _ReleaseNotes(
+      version: '2.4.0',
+      title: 'L’IA crée des sites de test',
+      icon: Icons.public_rounded,
+      changes: [
+        'Demande une page web : l’IA écrit le HTML et la publie à une adresse publique, ouvrable dans le navigateur.',
+        'Paramètres → Sites de test : retrouve, ouvre ou supprime ce que l’IA a publié.',
+        'Chaque site est une page HTML autonome, servie dans un bac à sable : son code n’accède ni à ton compte ni à tes données.',
+        'La connexion GitHub se trouve maintenant dans Paramètres, avec le choix du dépôt courant.',
+      ],
+    ),
+    _ReleaseNotes(
       version: '2.3.0',
       title: 'L’IA agit sur ton GitHub et lit tes fichiers',
       icon: Icons.hub_rounded,

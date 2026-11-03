@@ -122,6 +122,8 @@ mais aucune mise à jour n'est proposée : c'est volontaire.
 
 | Version | Contenu |
 | --- | --- |
+| `2.4.0` | L’IA crée des sites de test (pages HTML publiées à une adresse publique), écran *Sites de test*, et la connexion GitHub passe dans les paramètres. |
+| `2.3.0` | Connexion du compte GitHub personnel (OAuth device flow) et actions de l’IA sur les dépôts ; pièces jointes dans les messages. |
 | `2.2.0` | Historique des discussions, copier un message, régénérer, modifier et relancer, arrêt de génération, heure discrète, effacer la conversation, synchronisation des discussions sur le relais. |
 | `2.1.0` | Icône à côté des messages utilisateur quand connecté. |
 | `2.0.0` | Comptes WORLD-AI : inscription, connexion, profil et déconnexion depuis le menu. |
@@ -234,6 +236,8 @@ lisible par n’importe qui, et le dépôt est public.
 | `lib/ai/ai_client.dart` | Client de l’application, sans aucune clé. |
 | `lib/github/github_client.dart` | Connexion GitHub par compte (`/github*`). |
 | `lib/pages/github_page.dart` | Écran *GitHub* : connexion, dépôt courant, déconnexion. |
+| `lib/sites/sites_client.dart` | Client des sites de test publiés par l’IA (`/sites`). |
+| `lib/pages/sites_page.dart` | Écran *Sites de test* : ouvrir, supprimer. |
 
 **Poser la clé** : tableau de bord d’hébergement → projet *WORLD-AI relay* →
 *Secrets* → nom `GROQ_API_KEY`, valeur créée sur
@@ -254,7 +258,7 @@ Pour viser un autre relais : `--dart-define=AI_RELAY_URL=https://…`.
 ## Les actions GitHub de l’IA
 
 Chaque personne **connecte son propre compte GitHub** depuis l’application
-(menu latéral → *GitHub*). L’IA agit alors avec ses droits, sur ses dépôts :
+(*Paramètres* → *GitHub*). L’IA agit alors avec ses droits, sur ses dépôts :
 lire le code, ouvrir et commenter des issues, créer une branche, écrire des
 fichiers (un commit), ouvrir et fusionner une pull request, déclencher un
 workflow Actions. Chaque action est affichée sous la réponse, avec une coche ou
@@ -278,7 +282,7 @@ une croix.
 4. Tableau de bord d’hébergement → projet *WORLD-AI relay* → *Secrets* :
    `GITHUB_CLIENT_ID` et `GITHUB_CLIENT_SECRET`. Puis redéployer.
 
-Chaque personne ouvre ensuite *GitHub* dans l’application, touche
+Chaque personne ouvre ensuite *Paramètres* → *GitHub*, touche
 **Connecter avec GitHub**, recopie le code affiché sur
 [github.com/login/device](https://github.com/login/device) et valide. Aucun
 jeton ne transite par l’application : le relais garde le jeton du compte dans sa
@@ -293,6 +297,31 @@ du compte. Un échec remonte avec l’erreur réelle de GitHub, jamais inventée
 
 Pour retirer l’accès d’une personne : *Déconnecter GitHub* dans l’application
 (le jeton est supprimé de la base) ou révocation depuis GitHub.
+
+## Les sites de test créés par l’IA
+
+Demande à l’IA une page web — « crée-moi une page de test pour ma boutique » —
+et elle publie une page HTML autonome, puis te donne son adresse. Les sites
+appartiennent au compte WORLD-AI : un invité peut discuter, mais pas publier.
+
+| Route | Rôle |
+| --- | --- |
+| `GET /s/<slug>` | Sert la page publiée (publique, sans session). |
+| `GET /sites` | Liste les sites du compte connecté. |
+| `POST /sites` | Publie une page (`title`, `html`). |
+| `PATCH /sites/<slug>` | Remplace le contenu, l’adresse ne change pas. |
+| `DELETE /sites/<slug>` | Supprime le site ; son adresse cesse de répondre. |
+
+Outils exposés à l’IA : `site_create`, `site_update`, `site_list` et
+`site_delete`. Chaque site est **une seule page** (styles et scripts dans le
+fichier), plafonnée à 300 000 caractères, et un compte peut en avoir 50. Le
+`slug` est aléatoire (`/s/9f0c1a…`) : l’adresse est publique mais difficile à
+deviner. Un seul propriétaire peut modifier ou supprimer un site.
+
+Les pages sont servies avec `Content-Security-Policy: sandbox` : leurs scripts
+fonctionnent, mais dans une origine isolée, sans accès aux sessions ni aux
+données du relais. Dans l’application, *Paramètres* → *Sites de test* permet de
+les ouvrir dans le navigateur ou de les supprimer.
 
 ## Les comptes
 
